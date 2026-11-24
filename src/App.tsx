@@ -983,30 +983,6 @@ export default function App() {
     });
   };
 
-  const handleSendVoiceMessage = (
-    scope: ChatScope,
-    audioBase64: string,
-    mimeType: string,
-    durationSec: number
-  ) => {
-    if (!room) return;
-    const me = room.players.find((p) => p.id === profile.playerId);
-    if (!me) return;
-    appendAndBroadcastChat({
-      id: `voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      scope,
-      team: me.role,
-      senderId: me.id,
-      senderName: me.name,
-      senderColor: me.color,
-      kind: 'voice',
-      audioBase64,
-      mimeType,
-      durationSec,
-      ts: Date.now(),
-    });
-  };
-
   const handleOpenChat = () => {
     setShowChatDrawer(true);
     setUnreadChatCount(0);
@@ -1320,15 +1296,6 @@ export default function App() {
     visibleChatMessages.length > 0
       ? visibleChatMessages[visibleChatMessages.length - 1]
       : null;
-  const latestChatPreview = latestChatMsg
-    ? `${latestChatMsg.scope === 'global' ? '[Global]' : '[Team]'} ${
-        latestChatMsg.senderId === profile.playerId ? 'You' : latestChatMsg.senderName
-      }: ${
-        latestChatMsg.kind === 'voice'
-          ? `Voice message (${Math.max(1, Math.round(latestChatMsg.durationSec ?? 1))}s)`
-          : latestChatMsg.text ?? ''
-      }`
-    : null;
 
   return (
     <>
@@ -1387,7 +1354,6 @@ export default function App() {
             onRadioVisibilityChange={handleRadioVisibilityChange}
             onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
             onSendText={handleSendTextMessage}
-            onSendVoice={handleSendVoiceMessage}
             onOpenMoreMenu={() => setShowMoreMenu(true)}
             onRunnerGotTagged={handleRunnerGotTagged}
             onResolveEmergency={handleResolveEmergency}
@@ -1430,10 +1396,7 @@ export default function App() {
           messages={room.chatMessages ?? []}
           viewer={viewerPlayer}
           phase={room.phase}
-          isSoloDemo={room.isSoloDemo}
-          stealthHaptic={stealthHaptic}
           onSendText={handleSendTextMessage}
-          onSendVoice={handleSendVoiceMessage}
         />
       )}
 

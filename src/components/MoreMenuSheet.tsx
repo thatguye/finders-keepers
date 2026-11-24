@@ -1,11 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import {
-  ChevronRight,
-  LifeBuoy,
-  UserMinus,
-  X,
-} from 'lucide-react';
+import { ChevronRight, LifeBuoy, UserMinus, X } from 'lucide-react';
 import type { MapTheme, PlayerState } from '../types/game';
 
 interface MoreMenuSheetProps {
@@ -82,7 +77,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/72 backdrop-blur-sm p-0 sm:p-4"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -92,7 +87,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
         initial={{ opacity: 0, y: 36, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-        className="w-full sm:max-w-md rounded-t-[28px] sm:rounded-3xl bg-[#161514] border-t sm:border border-white/[0.1] px-5 pt-3 pb-safe shadow-2xl max-h-[86dvh] overflow-y-auto"
+        className="w-full sm:max-w-md rounded-t-[28px] sm:rounded-3xl bg-[#0D1019] border-t sm:border border-emerald-500/20 px-4 sm:px-5 pt-3 pb-safe shadow-2xl max-h-[86dvh] overflow-y-auto"
       >
         {/* Top Grab Handle */}
         <div className="w-10 h-1 bg-white/25 rounded-full mx-auto mb-4" />
@@ -104,7 +99,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
               <button
                 type="button"
                 onClick={() => setView('main')}
-                className="text-xs font-bold text-[#FF5733] hover:text-[#FF785A] mb-1"
+                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 mb-1"
               >
                 ← Back
               </button>
@@ -113,21 +108,21 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
               {view === 'players' ? `Players (${players.length})` : title}
             </h3>
             {subtitle && view === 'main' && (
-              <p className="mt-1 text-xs text-white/50">{subtitle}</p>
+              <p className="mt-1 text-xs text-slate-400">{subtitle}</p>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close controls"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/[0.07]"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/[0.07]"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {view === 'main' ? (
-          <div className="space-y-3.5 pb-2">
+          <div className="space-y-3 pb-2">
             {/* Prominent Get Help Row */}
             <button
               type="button"
@@ -135,21 +130,21 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                 onClose();
                 onOpenGetHelp();
               }}
-              className="w-full min-h-[56px] px-4 rounded-2xl bg-[#22211F] hover:bg-[#2A2926] flex items-center justify-between text-left transition-colors"
+              className="w-full min-h-[54px] px-4 rounded-2xl bg-[#141826] hover:bg-[#1B2133] border border-red-500/25 flex items-center justify-between text-left transition-colors"
             >
               <div className="flex items-center gap-3">
-                <LifeBuoy className="w-5 h-5 text-[#FF5733] shrink-0" />
-                <span className="text-[15px] font-bold text-[#FF5733]">Get help</span>
+                <LifeBuoy className="w-5 h-5 text-red-400 shrink-0" />
+                <span className="text-[15px] font-bold text-red-300">Get help</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-white/40" />
+              <ChevronRight className="w-4 h-4 text-slate-400" />
             </button>
 
             {/* Grouped Settings Card: Alerts & Map Style */}
-            <div className="rounded-2xl bg-[#22211F] divide-y divide-white/[0.07] overflow-hidden">
+            <div className="rounded-2xl bg-[#141826] border border-white/[0.07] divide-y divide-white/[0.07] overflow-hidden">
               {/* Alerts Segmented Toggle */}
               <div className="px-4 py-3 flex items-center justify-between gap-3">
                 <span className="text-[15px] font-medium text-white">Alerts</span>
-                <div className="inline-flex items-center p-1 rounded-xl bg-[#161514]">
+                <div className="inline-flex items-center p-1 rounded-xl bg-[#080A11] border border-white/[0.06]">
                   <button
                     type="button"
                     onClick={() => {
@@ -157,8 +152,8 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     }}
                     className={`min-h-[34px] px-3.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                       !stealthHaptic
-                        ? 'bg-[#E62E14] text-white'
-                        : 'text-white/60 hover:text-white'
+                        ? 'bg-emerald-500 text-[#08090E]'
+                        : 'text-slate-400 hover:text-white'
                     }`}
                   >
                     Sound
@@ -170,8 +165,8 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     }}
                     className={`min-h-[34px] px-3.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                       stealthHaptic
-                        ? 'bg-[#E62E14] text-white'
-                        : 'text-white/60 hover:text-white'
+                        ? 'bg-emerald-500 text-[#08090E]'
+                        : 'text-slate-400 hover:text-white'
                     }`}
                   >
                     Stealth
@@ -184,7 +179,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[15px] font-medium text-white">Map</span>
                 </div>
-                <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-[#161514]">
+                <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-[#080A11] border border-white/[0.06]">
                   {THEMES.map((t) => (
                     <button
                       key={t.id}
@@ -192,8 +187,8 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                       onClick={() => onChangeMapTheme(t.id)}
                       className={`min-h-[36px] rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                         mapTheme === t.id
-                          ? 'bg-[#E62E14] text-white'
-                          : 'text-white/65 hover:text-white'
+                          ? 'bg-emerald-500 text-[#08090E]'
+                          : 'text-slate-400 hover:text-white'
                       }`}
                     >
                       {t.label}
@@ -204,7 +199,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
             </div>
 
             {/* Grouped Action List */}
-            <div className="rounded-2xl bg-[#22211F] divide-y divide-white/[0.07] overflow-hidden">
+            <div className="rounded-2xl bg-[#141826] border border-white/[0.07] divide-y divide-white/[0.07] overflow-hidden">
               {isSoloDemo && onSoloPingNow && (
                 <button
                   type="button"
@@ -212,7 +207,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onSoloPingNow();
                     onClose();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
                 >
                   Ping now
                 </button>
@@ -225,11 +220,13 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onSoloTagNearest();
                     onClose();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between gap-2"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between gap-2"
                 >
                   <span>Tag the nearest runner</span>
                   {nearestBotName && (
-                    <span className="text-xs text-white/45 truncate">{nearestBotName}</span>
+                    <span className="text-xs text-emerald-400 font-semibold truncate">
+                      {nearestBotName}
+                    </span>
                   )}
                 </button>
               )}
@@ -241,7 +238,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onSoloSkipMinute();
                     onClose();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
                 >
                   Skip 1 minute
                 </button>
@@ -250,7 +247,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
               {isSoloDemo && onChangeSoloSpeed && (
                 <div className="px-4 py-3 flex items-center justify-between gap-3">
                   <span className="text-[15px] font-medium text-white">Speed</span>
-                  <div className="inline-flex items-center p-1 rounded-xl bg-[#161514]">
+                  <div className="inline-flex items-center p-1 rounded-xl bg-[#080A11] border border-white/[0.06]">
                     {SPEEDS.map((spd) => (
                       <button
                         key={spd}
@@ -258,8 +255,8 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                         onClick={() => onChangeSoloSpeed(spd)}
                         className={`min-h-[34px] px-3.5 rounded-lg text-xs font-bold font-mono tabular-nums transition-colors ${
                           soloSpeed === spd
-                            ? 'bg-[#E62E14] text-white'
-                            : 'text-white/60 hover:text-white'
+                            ? 'bg-emerald-500 text-[#08090E]'
+                            : 'text-slate-400 hover:text-white'
                         }`}
                       >
                         {spd}×
@@ -276,20 +273,20 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onClose();
                     onEnablePocketMode();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
                 >
                   <span>Pocket battery-saver mode</span>
-                  <ChevronRight className="w-4 h-4 text-white/40" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
                 </button>
               )}
 
               <button
                 type="button"
                 onClick={() => setView('players')}
-                className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
+                className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
               >
                 <span>Players ({players.length})</span>
-                <ChevronRight className="w-4 h-4 text-white/40" />
+                <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>
 
               {onOpenHowToPlay && (
@@ -299,10 +296,10 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onClose();
                     onOpenHowToPlay();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors flex items-center justify-between"
                 >
                   <span>How to play</span>
-                  <ChevronRight className="w-4 h-4 text-white/40" />
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
                 </button>
               )}
 
@@ -313,7 +310,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     onClose();
                     onEndRound();
                   }}
-                  className="w-full min-h-[52px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
+                  className="w-full min-h-[50px] px-4 text-left text-[15px] font-medium text-white hover:bg-white/[0.04] transition-colors"
                 >
                   End the round
                 </button>
@@ -325,7 +322,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                   onClose();
                   onLeaveGame();
                 }}
-                className="w-full min-h-[52px] px-4 text-left text-[15px] font-semibold text-[#FF5733] hover:bg-white/[0.04] transition-colors"
+                className="w-full min-h-[50px] px-4 text-left text-[15px] font-semibold text-red-400 hover:bg-red-500/10 transition-colors"
               >
                 Leave game
               </button>
@@ -336,7 +333,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
             {players.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-[#22211F]"
+                className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-[#141826] border border-white/[0.07]"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -346,10 +343,10 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
                     />
                     <span className="text-sm font-semibold text-white truncate">{p.name}</span>
                     {p.isHost && (
-                      <span className="text-[11px] font-semibold text-[#FF5733]">Host</span>
+                      <span className="text-[11px] font-semibold text-emerald-400">Host</span>
                     )}
                   </div>
-                  <div className="mt-0.5 text-xs text-white/50">
+                  <div className="mt-0.5 text-xs text-slate-400">
                     {p.role.charAt(0).toUpperCase() + p.role.slice(1)}
                     {p.eliminated ? ' · Eliminated' : ''}
                     {p.tagsCount > 0 ? ` · ${p.tagsCount} tags` : ''}

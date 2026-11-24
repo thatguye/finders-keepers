@@ -9,7 +9,6 @@ import {
   Flag,
   Flashlight,
   Lock,
-  Mic,
   Radio,
   ShieldAlert,
   Siren,
@@ -380,12 +379,12 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
             {/* Field Hardware */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
               <div className="rounded-xl bg-[#161926] border border-[#252A3D] p-3 flex items-start gap-2.5">
-                <Mic className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <Radio className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold text-white">Team &amp; Global Chat + Voice</div>
+                  <div className="font-bold text-white">Team &amp; Global Radio</div>
                   <p className="text-slate-300 mt-0.5">
-                    Chat privately with your team or globally with everyone, and send playable 10s
-                    voice messages right inside the feed.
+                    Message your teammates privately or broadcast globally with one-tap tactical
+                    quick replies.
                   </p>
                 </div>
               </div>
