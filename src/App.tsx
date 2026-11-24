@@ -25,12 +25,13 @@ import {
 import {
   assignTeams,
   calculateScores,
+  canAccessGameWithLocation,
   checkWinCondition,
   createDefaultSettings,
-  DEFAULT_COORDS,
   evaluateOobState,
   filterVisibleChatMessages,
   generateRoomCode,
+  type LocationAccessStatus,
   PLAYER_COLORS,
   processTag,
   shouldShowRoleReveal,
@@ -69,12 +70,15 @@ import { ProfileModal } from './components/ProfileModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { HowToPlayModal } from './components/HowToPlayModal';
 import { RoleRevealOverlay } from './components/RoleRevealOverlay';
+import { LocationGateOverlay } from './components/LocationGateOverlay';
 
 export default function App() {
   const [profile, setProfile] = useState<CareerProfile>(() => loadCareerProfile());
   const [customPresets, setCustomPresets] = useState<CustomPreset[]>(() => loadCustomPresets());
   const [room, setRoom] = useState<RoomState | null>(null);
-  const [userPos, setUserPos] = useState<LatLng>(DEFAULT_COORDS);
+  const [userPos, setUserPos] = useState<LatLng | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationAccessStatus>('checking');
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [isOnline, setIsOnline] = useState<boolean>(() =>
@@ -105,6 +109,10 @@ export default function App() {
 
   const roomRef = useRef<RoomState | null>(null);
   roomRef.current = room;
+  const userPosRef = useRef<LatLng | null>(null);
+  userPosRef.current = userPos;
+  const geoWatchIdRef = useRef<number | null>(null);
+  const initialSessionHandledRef = useRef<boolean>(false);
   const profileRef = useRef<CareerProfile>(profile);
   profileRef.current = profile;
   const stealthRef = useRef<boolean>(stealthHaptic);
@@ -130,9 +138,13 @@ export default function App() {
     [flashVisualEdge]
   );
 
+  const hasLocationAccess = canAccessGameWithLocation(locationStatus, userPos);
+
   // Sync body dataset state for testability and PWA clarity
   useEffect(() => {
-    const state = !room
+    const state = !hasLocationAccess
+      ? 'location_required'
+      : !room
       ? 'title'
       : room.phase === 'lobby'
       ? 'lobby'
@@ -142,7 +154,7 @@ export default function App() {
       ? 'gameover'
       : 'playing';
     document.body.dataset.state = state;
-  }, [room]);
+  }, [room, hasLocationAccess]);
 
   // Unlock iOS AudioSession on first interaction
   useEffect(() => {
@@ -316,22 +328,183 @@ export default function App() {
     [fireAlert]
   );
 
-  // Handle initial URL query params (?code=XXXXXX or ?autostart=1) and sessionStorage rejoin
+  // Parse ?code= invite link immediately so Join tab is pre-filled once GPS unlocks
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const codeParam = params.get('code')?.trim().toUpperCase() ?? '';
+    if (codeParam.length === 6) {
+      setInitialInviteCode(codeParam);
+    }
+  }, []);
+
+  // Mandatory real GPS acquisition on launch + continuous live tracking (never falls back to San Francisco)
+  const requestLocationAccess = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setUserPos(null);
+      setLocationStatus('unavailable');
+      setLocationError('This browser does not support GPS location services.');
+      return;
+    }
+
+    if (!userPosRef.current) {
+      setLocationStatus('checking');
+    }
+    setLocationError(null);
+
+    const applyGpsFix = (pos: GeolocationPosition) => {
+      const ts = Date.now();
+      const pt: GpsPoint = {
+        lat: roundCoord(pos.coords.latitude),
+        lng: roundCoord(pos.coords.longitude),
+        ts,
+      };
+      setUserPos({ lat: pt.lat, lng: pt.lng });
+      setLocationStatus('granted');
+      setLocationError(null);
+
+      const cur = roomRef.current;
+      if (!cur) return;
+
+      // Update local player GPS & local OOB check immediately
+      setRoom((prev) => {
+        if (!prev) return prev;
+        const myId = profileRef.current.playerId;
+        const players = prev.players.map((p) => {
+          if (p.id !== myId) return p;
+          const outside =
+            prev.phase === 'hunt' && p.role === 'runner' && !isPointInZone(pt, prev.currentZone);
+          const oobStartedAt = outside ? p.oobStartedAt ?? ts : null;
+          const oobEval = evaluateOobState(outside, oobStartedAt, ts);
+          const lastTrail = p.trail[p.trail.length - 1];
+          const append =
+            !lastTrail || haversineMeters(lastTrail, pt) >= 5 || ts - lastTrail.ts >= 10_000;
+          return {
+            ...p,
+            lastPos: pt,
+            trail: append ? [...p.trail.slice(-500), pt] : p.trail,
+            oobStartedAt,
+            oobStatus: oobEval.status,
+            lastSeenAt: ts,
+          };
+        });
+
+        return { ...prev, players };
+      });
+
+      // Smart cellular throttle for outgoing GPS broadcast
+      if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt)) {
+        lastUploadedGpsRef.current = pt;
+        void supabaseSync.sendGpsDelta(cur.code, profileRef.current.playerId, pt);
+      }
+    };
+
+    const handleGpsError = (err: GeolocationPositionError) => {
+      if (err.code === err.PERMISSION_DENIED) {
+        if (geoWatchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(geoWatchIdRef.current);
+          geoWatchIdRef.current = null;
+        }
+        setUserPos(null);
+        setLocationStatus('denied');
+        setLocationError(
+          'Location permission is blocked. Allow location access in your browser or device settings to play.'
+        );
+      } else if (!userPosRef.current) {
+        setLocationStatus('unavailable');
+        setLocationError(
+          err.code === err.TIMEOUT
+            ? 'GPS request timed out. Move to an area with clearer signal and try again.'
+            : 'Unable to determine your GPS location. Ensure Location Services are enabled and try again.'
+        );
+      }
+    };
+
+    // Prompt for location access immediately
+    navigator.geolocation.getCurrentPosition(applyGpsFix, handleGpsError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000,
+    });
+
+    if (geoWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(geoWatchIdRef.current);
+    }
+    geoWatchIdRef.current = navigator.geolocation.watchPosition(applyGpsFix, handleGpsError, {
+      enableHighAccuracy: true,
+      maximumAge: 3000,
+      timeout: 15000,
+    });
+  }, []);
+
+  // Ask for location directly on launch and react to live browser permission changes
+  useEffect(() => {
+    requestLocationAccess();
+
+    let permStatus: PermissionStatus | null = null;
+    const handlePermChange = () => {
+      if (!permStatus) return;
+      if (permStatus.state === 'denied') {
+        if (geoWatchIdRef.current !== null && navigator.geolocation) {
+          navigator.geolocation.clearWatch(geoWatchIdRef.current);
+          geoWatchIdRef.current = null;
+        }
+        setUserPos(null);
+        setLocationStatus('denied');
+        setLocationError(
+          'Location permission is blocked. Allow location access in your browser or device settings to play.'
+        );
+      } else if (permStatus.state === 'granted') {
+        requestLocationAccess();
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'geolocation' as PermissionName })
+        .then((status) => {
+          permStatus = status;
+          if (status.state === 'denied') {
+            setUserPos(null);
+            setLocationStatus('denied');
+            setLocationError(
+              'Location permission is blocked. Allow location access in your browser or device settings to play.'
+            );
+          }
+          status.addEventListener('change', handlePermChange);
+        })
+        .catch(() => {
+          // Safari / browsers without Permissions API for geolocation rely on getCurrentPosition
+        });
+    }
+
+    return () => {
+      if (geoWatchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.clearWatch(geoWatchIdRef.current);
+        geoWatchIdRef.current = null;
+      }
+      if (permStatus) {
+        permStatus.removeEventListener('change', handlePermChange);
+      }
+    };
+  }, [requestLocationAccess]);
+
+  // Run ?autostart=1 or seamless session rejoin ONLY after real GPS access is granted
+  useEffect(() => {
+    if (!hasLocationAccess || !userPos || initialSessionHandledRef.current) return;
+    initialSessionHandledRef.current = true;
+
+    const params = new URLSearchParams(window.location.search);
     const autoStart = params.get('autostart') === '1';
 
     if (autoStart) {
       const demo = createSoloDemoRoom(
         profileRef.current.playerId,
         profileRef.current.name || 'Field Agent',
-        DEFAULT_COORDS,
+        userPos,
         'hunter',
         'classic',
         Date.now()
       );
-      // Skip directly into active Hunt phase on autostart for instant map verification
       const startedDemo: RoomState = {
         ...demo,
         phase: 'hunt',
@@ -343,11 +516,6 @@ export default function App() {
       return;
     }
 
-    if (codeParam.length === 6) {
-      setInitialInviteCode(codeParam);
-    }
-
-    // Attempt seamless session rejoin on page refresh or app switch
     const savedSession = loadSessionRejoin();
     if (savedSession && savedSession.roomCode) {
       if (savedSession.isSoloDemo) {
@@ -371,12 +539,15 @@ export default function App() {
         });
       }
     }
-  }, [connectRoomChannel]);
+  }, [hasLocationAccess, userPos, connectRoomChannel]);
 
-  // Force full room state sync & reacquire Wake Lock on document.visibilitychange
+  // Force full room state sync, re-check GPS if blocked, & reacquire Wake Lock on visibilitychange
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
+        if (!userPosRef.current) {
+          requestLocationAccess();
+        }
         const cur = roomRef.current;
         if (cur && !cur.isSoloDemo) {
           void supabaseSync.flushQueue();
@@ -394,7 +565,7 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, []);
+  }, [requestLocationAccess]);
 
   // Manage Screen Wake Lock during active rounds
   const isRoundActive = !!room && (room.phase === 'head_start' || room.phase === 'hunt');
@@ -408,104 +579,6 @@ export default function App() {
       void releaseWakeLock();
     };
   }, [isRoundActive]);
-
-  // Directly request location access upon launching the app, then keep live GPS tracking active
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-
-    const applyGpsFix = (pos: GeolocationPosition) => {
-      const ts = Date.now();
-      const pt: GpsPoint = {
-        lat: roundCoord(pos.coords.latitude),
-        lng: roundCoord(pos.coords.longitude),
-        ts,
-      };
-      setUserPos({ lat: pt.lat, lng: pt.lng });
-
-      const cur = roomRef.current;
-      if (!cur) return;
-
-      // Update local player GPS & local OOB check immediately (and recenter fresh lobby zone if still on fallback)
-      setRoom((prev) => {
-        if (!prev) return prev;
-        const myId = profileRef.current.playerId;
-        const players = prev.players.map((p) => {
-          if (p.id !== myId) return p;
-          const outside =
-            prev.phase === 'hunt' && p.role === 'runner' && !isPointInZone(pt, prev.currentZone);
-          const oobStartedAt = outside ? p.oobStartedAt ?? ts : null;
-          const oobEval = evaluateOobState(outside, oobStartedAt, ts);
-          const lastTrail = p.trail[p.trail.length - 1];
-          const append =
-            !lastTrail || haversineMeters(lastTrail, pt) >= 5 || ts - lastTrail.ts >= 10_000;
-          return {
-            ...p,
-            lastPos: pt,
-            trail: append ? [...p.trail.slice(-500), pt] : p.trail,
-            oobStartedAt,
-            oobStatus: oobEval.status,
-            lastSeenAt: ts,
-          };
-        });
-
-        const isStillDefaultZone =
-          prev.phase === 'lobby' &&
-          prev.hostId === myId &&
-          Math.abs(prev.settings.zone.center.lat - DEFAULT_COORDS.lat) < 0.0002 &&
-          Math.abs(prev.settings.zone.center.lng - DEFAULT_COORDS.lng) < 0.0002;
-
-        if (isStillDefaultZone) {
-          const recenteredZone = {
-            ...prev.settings.zone,
-            center: { lat: pt.lat, lng: pt.lng },
-          };
-          return {
-            ...prev,
-            players,
-            settings: { ...prev.settings, zone: recenteredZone },
-            currentZone: recenteredZone,
-          };
-        }
-
-        return { ...prev, players };
-      });
-
-      // Smart cellular throttle for outgoing GPS broadcast
-      if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt)) {
-        lastUploadedGpsRef.current = pt;
-        void supabaseSync.sendGpsDelta(cur.code, profileRef.current.playerId, pt);
-      }
-    };
-
-    // Prompt for location access immediately on app launch
-    navigator.geolocation.getCurrentPosition(
-      applyGpsFix,
-      () => {
-        // Permission denied or unavailable — keep fallback coordinates cleanly
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 12000,
-      }
-    );
-
-    const watchId = navigator.geolocation.watchPosition(
-      applyGpsFix,
-      () => {
-        // GPS denied or unavailable in simulator/desktop — smoothly keep fallback
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 3000,
-        timeout: 12000,
-      }
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
-  }, []);
 
   // Local 1-second Rule Execution Engine (Timers, Pings, Zone Shrink/Curfew, OOB 2m Auto-Elimination, Solo Bots)
   useEffect(() => {
@@ -562,7 +635,8 @@ export default function App() {
         changed = true;
       }
 
-      // 4. Local Two-Stage Out-of-Bounds Evaluation for active Runners
+      // 4. Single-Stage Out-of-Bounds Elimination for active Runners (auto-out at 30s, no grace period)
+      let oobEliminated = false;
       if (next.phase === 'hunt') {
         for (const p of next.players) {
           if (p.role !== 'runner' || p.eliminated || !p.lastPos) continue;
@@ -581,7 +655,11 @@ export default function App() {
             if (oob.status === 'eliminated') {
               if (isHost || next.isSoloDemo || p.id === profileRef.current.playerId) {
                 next = processTag(next, p.id, undefined, 'oob_timeout', now);
+                if (!next.isSoloDemo) {
+                  void supabaseSync.sendTagSignal(next.code, p.id, undefined, 'oob_timeout', now);
+                }
                 fireAlert('tagged');
+                oobEliminated = true;
                 changed = true;
               }
             } else if (oob.status !== p.oobStatus) {
@@ -670,7 +748,10 @@ export default function App() {
       }
 
       if (changed) {
-        commitRoom(next, isHost && !next.isSoloDemo && next.phase !== cur.phase);
+        commitRoom(
+          next,
+          !next.isSoloDemo && (oobEliminated || (isHost && next.phase !== cur.phase))
+        );
       }
     }, 1000);
 
@@ -706,6 +787,10 @@ export default function App() {
   };
 
   const handleHostGame = (mode: GameMode) => {
+    if (!userPos) {
+      requestLocationAccess();
+      return;
+    }
     unlockAudioSession();
     const now = Date.now();
     const code = generateRoomCode();
@@ -771,6 +856,10 @@ export default function App() {
   };
 
   const handleJoinGame = async (codeInput: string): Promise<string | null> => {
+    if (!userPos) {
+      requestLocationAccess();
+      return 'Location access is required before joining a game.';
+    }
     unlockAudioSession();
     const code = codeInput.trim().toUpperCase();
     const now = Date.now();
@@ -780,6 +869,7 @@ export default function App() {
       return `Room ${code} was not found. Ask the host to create the lobby first or verify the code.`;
     }
 
+    const myPos: GpsPoint = { lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: now };
     const exists = fetched.players.some((p) => p.id === profile.playerId);
     const myPlayer: PlayerState = {
       id: profile.playerId,
@@ -790,8 +880,8 @@ export default function App() {
       eliminated: fetched.phase !== 'lobby',
       tagsCount: 0,
       color: PLAYER_COLORS[fetched.players.length % PLAYER_COLORS.length],
-      lastPos: { lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: now },
-      trail: [{ lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: now }],
+      lastPos: myPos,
+      trail: [myPos],
       oobStartedAt: null,
       oobStatus: 'inside',
       connected: true,
@@ -803,7 +893,14 @@ export default function App() {
       players: exists
         ? fetched.players.map((p) =>
             p.id === profile.playerId
-              ? { ...p, name: myPlayer.name, connected: true, lastSeenAt: now }
+              ? {
+                  ...p,
+                  name: myPlayer.name,
+                  lastPos: myPos,
+                  trail: p.trail.length > 0 ? p.trail : [myPos],
+                  connected: true,
+                  lastSeenAt: now,
+                }
               : p
           )
         : [...fetched.players, myPlayer],
@@ -823,6 +920,10 @@ export default function App() {
   };
 
   const handleStartSoloDemo = (role: 'hunter' | 'runner' | 'random', mode: GameMode) => {
+    if (!userPos) {
+      requestLocationAccess();
+      return;
+    }
     unlockAudioSession();
     const now = Date.now();
     const demo = createSoloDemoRoom(
@@ -989,7 +1090,7 @@ export default function App() {
   };
 
   const handleTriggerRoomEmergency = (address: string) => {
-    if (!room) return;
+    if (!room || !userPos) return;
     const now = Date.now();
     const me = room.players.find((p) => p.id === profile.playerId);
     const alert: EmergencyAlert = {
@@ -1281,7 +1382,7 @@ export default function App() {
 
   const viewerPlayer = room?.players.find((p) => p.id === profile.playerId);
   const nearestRunnerBot =
-    room && room.isSoloDemo && (room.phase === 'hunt' || room.phase === 'head_start')
+    room && userPos && room.isSoloDemo && (room.phase === 'hunt' || room.phase === 'head_start')
       ? room.players
           .filter((p) => p.isBot && p.role === 'runner' && !p.eliminated && p.lastPos)
           .sort(
@@ -1296,6 +1397,16 @@ export default function App() {
     visibleChatMessages.length > 0
       ? visibleChatMessages[visibleChatMessages.length - 1]
       : null;
+
+  if (!hasLocationAccess || !userPos) {
+    return (
+      <LocationGateOverlay
+        status={locationStatus}
+        errorMessage={locationError}
+        onRequestLocation={requestLocationAccess}
+      />
+    );
+  }
 
   return (
     <>

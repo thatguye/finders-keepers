@@ -256,6 +256,26 @@ export function assignTeams(
   });
 }
 
+export const OOB_COUNTDOWN_SECONDS = 30;
+
+export type LocationAccessStatus = 'checking' | 'granted' | 'denied' | 'unavailable';
+
+/**
+ * Mandatory GPS gate: players must have granted real device location access
+ * with finite coordinates before hosting, joining, or starting a game.
+ */
+export function canAccessGameWithLocation(
+  status: LocationAccessStatus,
+  pos: LatLng | null | undefined
+): pos is LatLng {
+  return (
+    status === 'granted' &&
+    !!pos &&
+    Number.isFinite(pos.lat) &&
+    Number.isFinite(pos.lng)
+  );
+}
+
 export interface OobEvaluation {
   status: OobStatus;
   elapsedSec: number;
@@ -264,10 +284,9 @@ export interface OobEvaluation {
 }
 
 /**
- * Two-stage Out-of-Bounds Penalty Rule:
- * - 0..29.9s outside: 'warning' (30-second countdown warning)
- * - 30..119.9s outside: 'exposed' (live GPS revealed to Hunters)
- * - >= 120s outside: 'eliminated' (auto-tagged)
+ * Single-stage Out-of-Bounds Elimination Rule (No Grace Period):
+ * - 0..29.9s outside: 'warning' (30-second countdown to return inside boundary)
+ * - >= 30s outside: 'eliminated' (automatically out / tagged immediately)
  */
 export function evaluateOobState(
   isOutside: boolean,
@@ -278,12 +297,12 @@ export function evaluateOobState(
     return {
       status: 'inside',
       elapsedSec: 0,
-      secondsUntilExposed: 30,
-      secondsUntilEliminated: 120,
+      secondsUntilExposed: OOB_COUNTDOWN_SECONDS,
+      secondsUntilEliminated: OOB_COUNTDOWN_SECONDS,
     };
   }
   const elapsedSec = Math.max(0, (nowMs - oobStartedAt) / 1000);
-  if (elapsedSec >= 120) {
+  if (elapsedSec >= OOB_COUNTDOWN_SECONDS) {
     return {
       status: 'eliminated',
       elapsedSec,
@@ -291,19 +310,12 @@ export function evaluateOobState(
       secondsUntilEliminated: 0,
     };
   }
-  if (elapsedSec >= 30) {
-    return {
-      status: 'exposed',
-      elapsedSec,
-      secondsUntilExposed: 0,
-      secondsUntilEliminated: Math.ceil(120 - elapsedSec),
-    };
-  }
+  const remaining = Math.ceil(OOB_COUNTDOWN_SECONDS - elapsedSec);
   return {
     status: 'warning',
     elapsedSec,
-    secondsUntilExposed: Math.ceil(30 - elapsedSec),
-    secondsUntilEliminated: Math.ceil(120 - elapsedSec),
+    secondsUntilExposed: remaining,
+    secondsUntilEliminated: remaining,
   };
 }
 

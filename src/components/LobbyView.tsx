@@ -169,34 +169,40 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     <div className="min-h-dvh bg-[#08090E] text-[#F4F5F9] flex flex-col">
       {/* Clean Sticky Header */}
       <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#0A0B12]/92 backdrop-blur-md pt-safe">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[11px] font-medium text-slate-400">Room Code</div>
-            <div className="font-mono text-2xl font-bold tracking-[0.18em] text-emerald-400 leading-none tabular-nums">
+        <div
+          data-testid="lobby-header-bar"
+          className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-3"
+        >
+          <div data-testid="lobby-room-code-block" className="shrink-0">
+            <div className="text-[10px] sm:text-[11px] font-medium text-slate-400 whitespace-nowrap leading-tight">
+              Room Code
+            </div>
+            <div className="font-mono text-lg sm:text-2xl font-bold tracking-[0.12em] sm:tracking-[0.18em] text-emerald-400 leading-none tabular-nums whitespace-nowrap mt-0.5">
               {room.code}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div data-testid="lobby-header-actions" className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <motion.button
               whileTap={{ scale: 0.96 }}
               type="button"
               onClick={handleCopyInvite}
-              className="min-h-[44px] px-3.5 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center gap-1.5 whitespace-nowrap"
+              className="min-h-[40px] sm:min-h-[44px] px-2.5 sm:px-3.5 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center gap-1.5 whitespace-nowrap"
             >
               {copied ? (
-                <Check className="w-4 h-4 text-emerald-400" />
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
               ) : (
-                <Copy className="w-4 h-4 text-cyan-400" />
+                <Copy className="w-4 h-4 text-emerald-400 shrink-0" />
               )}
-              <span>{copied ? 'Copied' : 'Invite Link'}</span>
+              <span className="sm:hidden">{copied ? 'Copied' : 'Invite'}</span>
+              <span className="hidden sm:inline">{copied ? 'Copied' : 'Invite Link'}</span>
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.95 }}
               type="button"
               onClick={onShowQr}
               aria-label="Show QR Code"
-              className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              className="min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] sm:px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
               <QrCode className="w-4 h-4 text-emerald-400" />
               <span className="hidden sm:inline">QR Code</span>
@@ -206,7 +212,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               type="button"
               onClick={onOpenChat}
               aria-label="Open Lobby Radio"
-              className="relative min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              className="relative min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] sm:px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
               <Radio className="w-4 h-4 text-emerald-400" />
               <span className="hidden sm:inline">Radio</span>
@@ -221,7 +227,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               type="button"
               onClick={onOpenMoreMenu}
               aria-label="More options and Get Help"
-              className="min-h-[44px] min-w-[44px] rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 flex items-center justify-center text-white"
+              className="min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 flex items-center justify-center text-white"
             >
               <MoreHorizontal className="w-5 h-5" />
             </motion.button>

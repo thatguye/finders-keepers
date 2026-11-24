@@ -409,7 +409,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           onClick={() => setDemoRole('hunter')}
                           className={`min-h-[38px] px-2.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                             demoRole === 'hunter'
-                              ? 'bg-[#E62E14] text-white'
+                              ? 'bg-red-500 text-white'
                               : 'text-slate-400 hover:text-white'
                           }`}
                         >
@@ -431,7 +431,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                           onClick={() => setDemoRole('random')}
                           className={`min-h-[38px] px-2.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                             demoRole === 'random'
-                              ? 'bg-white text-[#141413]'
+                              ? 'bg-emerald-400 text-[#08090E]'
                               : 'text-slate-400 hover:text-white'
                           }`}
                         >

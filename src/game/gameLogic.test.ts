@@ -15,6 +15,7 @@ import {
 import {
   assignTeams,
   calculateScores,
+  canAccessGameWithLocation,
   checkWinCondition,
   createDefaultSettings,
   DEFAULT_COORDS,
@@ -24,6 +25,7 @@ import {
   formatRealDateTime,
   generateRoomCode,
   getCallsignInitial,
+  OOB_COUNTDOWN_SECONDS,
   processTag,
   resolveReleaseTimestamps,
   shouldShowRoleReveal,
@@ -102,19 +104,37 @@ test('assignTeams enforces >= 1 Hunter per 10 players and never more Hunters tha
   assert.ok(assignedImp.some((p) => p.isImposter), 'Imposter mode must assign at least one imposter');
 });
 
-test('evaluateOobState enforces 30s warning -> exposed -> 2m elimination', () => {
+test('evaluateOobState enforces single 30s countdown directly into automatic elimination (no grace period)', () => {
   const start = 10_000;
-  assert.equal(evaluateOobState(false, null, start).status, 'inside');
+  const inside = evaluateOobState(false, null, start);
+  assert.equal(inside.status, 'inside');
+  assert.equal(inside.secondsUntilEliminated, OOB_COUNTDOWN_SECONDS);
+
   const warn = evaluateOobState(true, start, start + 15_000);
   assert.equal(warn.status, 'warning');
-  assert.equal(warn.secondsUntilExposed, 15);
+  assert.equal(warn.secondsUntilEliminated, 15);
 
-  const exposed = evaluateOobState(true, start, start + 45_000);
-  assert.equal(exposed.status, 'exposed');
-  assert.equal(exposed.secondsUntilEliminated, 75);
+  const almostOut = evaluateOobState(true, start, start + 29_500);
+  assert.equal(almostOut.status, 'warning');
+  assert.equal(almostOut.secondsUntilEliminated, 1);
 
-  const elim = evaluateOobState(true, start, start + 120_000);
-  assert.equal(elim.status, 'eliminated');
+  // At 30s, immediately eliminated — NO exposed grace period
+  const elimAt30 = evaluateOobState(true, start, start + 30_000);
+  assert.equal(elimAt30.status, 'eliminated');
+  assert.equal(elimAt30.secondsUntilEliminated, 0);
+
+  const elimAt45 = evaluateOobState(true, start, start + 45_000);
+  assert.equal(elimAt45.status, 'eliminated');
+});
+
+test('canAccessGameWithLocation blocks gameplay until real GPS coordinates are granted', () => {
+  assert.equal(canAccessGameWithLocation('checking', null), false);
+  assert.equal(canAccessGameWithLocation('denied', null), false);
+  assert.equal(canAccessGameWithLocation('unavailable', null), false);
+  assert.equal(canAccessGameWithLocation('denied', { lat: 30.2672, lng: -97.7431 }), false);
+  assert.equal(canAccessGameWithLocation('granted', null), false);
+  assert.equal(canAccessGameWithLocation('granted', { lat: Number.NaN, lng: -97.7431 }), false);
+  assert.equal(canAccessGameWithLocation('granted', { lat: 30.2672, lng: -97.7431 }), true);
 });
 
 test('shouldThrottleGpsUpload uses 4s while moving >3m and 12s while stationary', () => {

@@ -346,14 +346,15 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
             <div className="rounded-xl bg-red-950/30 border border-red-500/40 p-4 space-y-1.5">
               <div className="flex items-center gap-2 text-xs font-bold text-red-200">
                 <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-                <span>2-Stage Out-of-Bounds Penalty (Runners)</span>
+                <span>Out-of-Bounds Countdown (Runners)</span>
               </div>
               <p className="text-xs text-red-100/85 leading-relaxed">
                 Step outside the active Play Zone during the Hunt and a{' '}
-                <strong className="text-white">30-second warning</strong> begins. If you stay
-                outside past 30s, your <strong className="text-white">live GPS is exposed</strong>{' '}
-                directly to Hunters. Stay outside for <strong className="text-white">2 minutes</strong>{' '}
-                total and you are automatically eliminated/tagged.
+                <strong className="text-white">30-second countdown</strong> starts immediately.
+                Return inside the boundary before it hits{' '}
+                <strong className="text-white">0s</strong>—otherwise you are automatically out
+                (eliminated in Classic, or converted to a Hunter in Infection) with no grace
+                period.
               </p>
             </div>
 

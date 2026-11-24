@@ -346,10 +346,11 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
               </motion.button>
             </div>
 
-            {/* Two-Stage Out-of-Bounds Alert Banner */}
+            {/* Out-of-Bounds Elimination Countdown Banner (No Grace Period) */}
             <AnimatePresence>
               {role === 'runner' && oobEval.status !== 'inside' && (
                 <motion.div
+                  data-testid="oob-warning-banner"
                   initial={{ opacity: 0, y: -10, scale: 0.96 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.96 }}
@@ -358,15 +359,11 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                   <div className="flex items-center gap-2.5">
                     <AlertTriangle className="w-5 h-5 text-white shrink-0" />
                     <div className="text-xs font-bold text-white leading-snug">
-                      {oobEval.status === 'exposed'
-                        ? 'OUT OF BOUNDS — LIVE GPS EXPOSED TO HUNTERS!'
-                        : 'OUT OF BOUNDS — RETURN TO ZONE!'}
+                      OUT OF BOUNDS — RETURN NOW OR YOU&apos;RE OUT!
                     </div>
                   </div>
                   <div className="font-mono text-base font-extrabold text-white tabular-nums shrink-0">
-                    {oobEval.status === 'exposed'
-                      ? `${oobEval.secondsUntilEliminated}s`
-                      : `${oobEval.secondsUntilExposed}s`}
+                    {oobEval.secondsUntilEliminated}s
                   </div>
                 </motion.div>
               )}
@@ -648,11 +645,7 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
           phaseLabel={leftMetricLabel.toUpperCase()}
           role={role}
           oobStatus={oobEval.status}
-          oobSecondsLeft={
-            oobEval.status === 'exposed'
-              ? oobEval.secondsUntilEliminated
-              : oobEval.secondsUntilExposed
-          }
+          oobSecondsLeft={oobEval.secondsUntilEliminated}
           onUnlock={() => onSetPocketMode(false)}
         />
       )}

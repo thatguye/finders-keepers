@@ -14,16 +14,26 @@ interface ReleaseDefinition {
   highlights: string[];
 }
 
-const STORAGE_KEY = 'fk_changelog_timestamps_v2';
+const STORAGE_KEY = 'fk_changelog_timestamps_v3';
 
 const RELEASES: ReleaseDefinition[] = [
   {
-    version: '1.5',
+    version: '1.6',
     offsetMinutesAgo: 0,
+    title: 'Instant Out-of-Bounds, Mandatory GPS & Dark-Emerald UI',
+    highlights: [
+      'Out-of-Bounds now automatically eliminates Runners as soon as the 30-second countdown ends—no grace period.',
+      'Location access is now required at launch so every player joins at their real GPS position.',
+      'Unified every screen into the dark obsidian and emerald tactical theme with zero HUD overlap on mobile.',
+    ],
+  },
+  {
+    version: '1.5',
+    offsetMinutesAgo: 22,
     title: 'Role Reveal, Radio & Tactical Redesign',
     highlights: [
       'Added a full-screen tap-to-reveal role screen when starting a match on Random.',
-      'Rebuilt live game navigation around the new Map and Radio experience with Team, Global, and voice messages.',
+      'Rebuilt live game navigation around the Map and Team/Global Radio experience.',
       'Refreshed the in-game HUD and controls sheet for cleaner outdoor legibility.',
     ],
   },
@@ -112,23 +122,23 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
         initial={{ opacity: 0, y: 18, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-        className="w-full max-w-lg max-h-[85dvh] flex flex-col rounded-3xl bg-[#161514] border border-white/10 shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[85dvh] flex flex-col rounded-3xl bg-[#0B0E17] border border-emerald-500/20 shadow-2xl overflow-hidden"
       >
         <div className="p-5 border-b border-white/[0.08] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#E62E14]/15 border border-[#E62E14]/35 flex items-center justify-center shrink-0">
-              <ScrollText className="w-5 h-5 text-[#FF5733]" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center shrink-0">
+              <ScrollText className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
               <h2 className="text-lg font-bold text-white leading-tight">Changelog</h2>
-              <p className="text-xs text-white/50">Recent updates to Finders Keepers</p>
+              <p className="text-xs text-slate-400">Recent updates to Finders Keepers</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close changelog"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-white/50 hover:text-white hover:bg-white/5"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/5"
           >
             <X className="w-5 h-5" />
           </button>
@@ -144,17 +154,17 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
                 <h3 className="text-base font-bold text-white">{release.title}</h3>
                 <span
                   data-testid="changelog-timestamp"
-                  className="text-xs font-mono text-white/50 tabular-nums shrink-0"
+                  className="text-xs font-mono text-emerald-300/80 tabular-nums shrink-0"
                 >
                   v{release.version} · {formatRealDateTime(timestamps[release.version])}
                 </span>
               </div>
-              <ul className="mt-2.5 space-y-2 text-sm text-white/75 leading-relaxed">
+              <ul className="mt-2.5 space-y-2 text-sm text-slate-300 leading-relaxed">
                 {release.highlights.map((item) => (
                   <li key={item} className="flex items-start gap-2.5">
                     <span
                       aria-hidden="true"
-                      className="mt-2 w-1.5 h-1.5 rounded-full bg-[#EA3419] shrink-0"
+                      className="mt-2 w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"
                     />
                     <span>{item}</span>
                   </li>
@@ -164,11 +174,11 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
           ))}
         </div>
 
-        <div className="p-4 border-t border-white/[0.08] bg-[#111010]">
+        <div className="p-4 border-t border-white/[0.08] bg-[#08090E]">
           <button
             type="button"
             onClick={onClose}
-            className="w-full min-h-[46px] rounded-2xl bg-[#22211F] hover:bg-[#2C2A28] border border-white/10 text-sm font-bold text-white transition-colors"
+            className="w-full min-h-[46px] rounded-2xl bg-[#141926] hover:bg-[#1C2334] border border-emerald-500/20 text-sm font-bold text-white transition-colors"
           >
             Close
           </button>

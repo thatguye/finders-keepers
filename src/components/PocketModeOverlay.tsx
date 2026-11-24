@@ -55,16 +55,10 @@ export const PocketModeOverlay: React.FC<PocketModeOverlayProps> = ({
           <div className="mt-8 w-full max-w-xs rounded-2xl bg-red-950/70 border border-red-500/60 p-4 text-center">
             <div className="inline-flex items-center gap-2 text-red-400 font-bold text-sm">
               <AlertTriangle className="w-4 h-4" />
-              <span>
-                {oobStatus === 'exposed'
-                  ? 'OUT OF BOUNDS · GPS EXPOSED'
-                  : 'OUT OF BOUNDS WARNING'}
-              </span>
+              <span>OUT OF BOUNDS — RETURN NOW</span>
             </div>
             <p className="mt-1 font-mono text-lg font-bold text-white tabular-nums">
-              {oobStatus === 'exposed'
-                ? `Elimination in ${oobSecondsLeft}s`
-                : `Exposed in ${oobSecondsLeft}s`}
+              Out in {oobSecondsLeft}s
             </p>
           </div>
         )}

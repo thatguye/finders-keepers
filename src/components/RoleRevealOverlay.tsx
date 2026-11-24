@@ -162,9 +162,13 @@ export const RoleRevealOverlay: React.FC<RoleRevealOverlayProps> = ({
                   scale: { duration: 2.6, repeat: Infinity, ease: 'easeInOut' },
                 }}
                 aria-hidden="true"
-                className="w-[170px] sm:w-[220px] h-[230px] sm:h-[300px] flex items-center justify-center"
+                className="w-[170px] sm:w-[220px] h-[230px] sm:h-[300px] flex items-center justify-center bg-transparent"
               >
-                <svg viewBox="0 0 220 300" className="w-full h-full overflow-visible drop-shadow-[0_0_32px_rgba(16,185,129,0.45)]">
+                <svg
+                  data-testid="role-reveal-question-svg"
+                  viewBox="0 0 220 300"
+                  className="w-full h-full overflow-visible bg-transparent"
+                >
                   <path
                     d="M34 114 C34 48 80 18 119 18 C165 18 197 48 197 92 C197 127 177 148 152 166 C135 178 131 187 131 206 L86 206 C86 171 96 154 118 137 C135 124 146 113 146 95 C146 77 133 66 115 66 C94 66 82 81 82 114 Z"
                     fill="#10B981"
