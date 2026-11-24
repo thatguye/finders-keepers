@@ -1,4 +1,5 @@
 import React from 'react';
+import { motion } from 'motion/react';
 import { ScrollText, X } from 'lucide-react';
 
 interface ChangelogModalProps {
@@ -13,6 +14,16 @@ interface ReleaseNote {
 }
 
 const RELEASES: ReleaseNote[] = [
+  {
+    version: '1.4',
+    date: 'Nov 2026',
+    title: 'Visual Overhaul & Field Upgrades',
+    highlights: [
+      'Streamlined every screen with a cleaner layout, smoother transitions, and refined mobile spacing.',
+      'Upgraded map styles so every theme switches cleanly with crisp contrast.',
+      'Refreshed team walkie-talkie feedback and updated default measurements to US miles and feet.',
+    ],
+  },
   {
     version: '1.3',
     date: 'Nov 2026',
@@ -55,13 +66,21 @@ const RELEASES: ReleaseNote[] = [
 
 export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Changelog"
     >
-      <div className="w-full max-w-lg max-h-[85dvh] flex flex-col rounded-2xl bg-[#11131D] border border-[#272C40] shadow-2xl overflow-hidden">
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+        className="w-full max-w-lg max-h-[85dvh] flex flex-col rounded-2xl bg-[#11131D] border border-white/10 shadow-2xl overflow-hidden"
+      >
         <div className="p-5 border-b border-[#222638] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center shrink-0">
@@ -118,7 +137,7 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
             Close
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

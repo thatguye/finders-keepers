@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import {
   AlertTriangle,
   BookOpen,
@@ -47,13 +48,21 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-3 sm:p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16 }}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="How to Play Finders Keepers"
     >
-      <div className="w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-2xl bg-[#11131D] border border-[#272C40] shadow-2xl overflow-hidden">
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+        className="w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-2xl bg-[#11131D] border border-white/10 shadow-2xl overflow-hidden"
+      >
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-[#222638] flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -145,7 +154,7 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
                   The Host chooses a mode, sets Round Length (5–180m), Radar Ping interval (Off or
                   1–30m), and Head Start (0–30m), and defines the Play Zone as{' '}
                   <strong className="text-white">Off</strong>, a resizable{' '}
-                  <strong className="text-white">Circle</strong> (200m–6km), or a custom dragged{' '}
+                  <strong className="text-white">Circle</strong> (650 ft – 3.7 mi), or a custom dragged{' '}
                   <strong className="text-white">Polygon</strong>.
                 </p>
               </div>
@@ -404,7 +413,7 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
                 <div>
                   <div className="font-bold text-white">Get Help (Safety Pause)</div>
                   <p className="text-slate-300 mt-0.5">
-                    Opens 911/112 dial + your exact street address, or hold 2s to pause the whole
+                    Opens 911 dial + your exact street address, or hold 2s to pause the whole
                     game and broadcast your emergency GPS pin.
                   </p>
                 </div>
@@ -423,7 +432,7 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
             Got It — Ready to Play
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

@@ -186,11 +186,12 @@ export function totalPathDistanceMeters(points: GpsPoint[]): number {
   return Math.round(total);
 }
 
-export function formatDistance(meters: number, units: UnitSystem): string {
+export function formatDistance(meters: number, units: UnitSystem = 'mi'): string {
   if (units === 'mi') {
     const miles = meters / 1609.344;
     if (miles < 0.2) {
-      return `${Math.round(meters * 3.28084)} ft`;
+      const feet = Math.round(meters * 3.28084);
+      return `${feet.toLocaleString('en-US')} ft`;
     }
     return `${miles.toFixed(2)} mi`;
   }
@@ -200,12 +201,14 @@ export function formatDistance(meters: number, units: UnitSystem): string {
   return `${(meters / 1000).toFixed(2)} km`;
 }
 
-export function formatZoneSize(diameterMeters: number, units: UnitSystem): string {
+export function formatZoneSize(diameterMeters: number, units: UnitSystem = 'mi'): string {
   if (units === 'mi') {
     const miles = diameterMeters / 1609.344;
-    return miles < 0.25
-      ? `${Math.round(diameterMeters * 3.28084)} ft`
-      : `${miles.toFixed(1)} mi`;
+    if (miles < 0.25) {
+      const feet = Math.round((diameterMeters * 3.28084) / 10) * 10;
+      return `${feet.toLocaleString('en-US')} ft`;
+    }
+    return `${miles.toFixed(1)} mi`;
   }
   return diameterMeters < 1000
     ? `${Math.round(diameterMeters)} m`

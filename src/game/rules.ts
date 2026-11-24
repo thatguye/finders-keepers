@@ -51,8 +51,8 @@ export const BADGE_DEFINITIONS: BadgeDefinition[] = [
   },
   {
     id: 'marathon_5k',
-    name: 'Field Runner 5K',
-    description: 'Accumulate 5 km of tracked GPS pursuit distance.',
+    name: 'Field Runner 3 Mi',
+    description: 'Accumulate 3 miles of tracked GPS pursuit distance.',
     tier: 'standard',
   },
   {
@@ -92,37 +92,37 @@ export const BUILT_IN_PRESETS: BuiltInPreset[] = [
   {
     id: 'quick',
     name: 'Quick',
-    summary: '15m · 1m ping · 800m',
+    summary: '15m · 1m ping · 0.5 mi',
     patch: {
       roundLengthMin: 15,
       pingIntervalMin: 1,
       headStartMin: 1,
       zoneShrinkEnabled: true,
-      finalZoneDiameterMeters: 250,
+      finalZoneDiameterMeters: 244, // 800 ft
     },
   },
   {
     id: 'standard',
     name: 'Standard',
-    summary: '60m · 2m ping · 3km',
+    summary: '60m · 2m ping · 2.0 mi',
     patch: {
       roundLengthMin: 60,
       pingIntervalMin: 2,
       headStartMin: 3,
       zoneShrinkEnabled: true,
-      finalZoneDiameterMeters: 500,
+      finalZoneDiameterMeters: 483, // 0.3 mi
     },
   },
   {
     id: 'big_park',
     name: 'Big Park',
-    summary: '120m · 5m ping · 5km',
+    summary: '120m · 5m ping · 3.5 mi',
     patch: {
       roundLengthMin: 120,
       pingIntervalMin: 5,
       headStartMin: 5,
       zoneShrinkEnabled: true,
-      finalZoneDiameterMeters: 1000,
+      finalZoneDiameterMeters: 966, // 0.6 mi
     },
   },
 ];
@@ -136,13 +136,13 @@ export function createDefaultSettings(center: LatLng = DEFAULT_COORDS): RoomSett
     zone: {
       shape: 'circle',
       center,
-      diameterMeters: 3000,
+      diameterMeters: 3219, // 2.0 mi
       polygon: createDefaultPolygonAround(center, 650),
     },
     zoneShrinkEnabled: true,
-    finalZoneDiameterMeters: 500,
+    finalZoneDiameterMeters: 483, // 0.3 mi
     spectatorAccess: 'live',
-    units: 'km',
+    units: 'mi',
     mapTheme: 'night',
   };
 }
@@ -151,9 +151,9 @@ export function applyBuiltInPreset(current: RoomSettings, presetId: BuiltInPrese
   const found = BUILT_IN_PRESETS.find((p) => p.id === presetId);
   if (!found) return current;
   const diameterMap: Record<BuiltInPreset['id'], number> = {
-    quick: 800,
-    standard: 3000,
-    big_park: 5000,
+    quick: 805, // 0.5 mi
+    standard: 3219, // 2.0 mi
+    big_park: 5633, // 3.5 mi
   };
   return {
     ...current,
@@ -637,7 +637,7 @@ export function evaluateUnlockedBadges(
   if (playerScore?.cleanSweepBonus) {
     unlocked.add('clean_sweep');
   }
-  if (profile.totalDistanceMeters >= 5000) {
+  if (profile.totalDistanceMeters >= 4828) {
     unlocked.add('marathon_5k');
   }
   if (roundRoom.settings.mapTheme === 'night') {

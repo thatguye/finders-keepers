@@ -59,29 +59,16 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/tile\.openstreetmap\.org\/.*/i,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'osm-tiles-cache',
-                expiration: {
-                  maxEntries: 600,
-                  maxAgeSeconds: 60 * 60 * 24 * 14,
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
             {
               urlPattern: /^https:\/\/server\.arcgisonline\.com\/.*/i,
               handler: 'CacheFirst',
               options: {
-                cacheName: 'esri-satellite-cache',
+                cacheName: 'esri-map-tiles-cache',
                 expiration: {
-                  maxEntries: 400,
+                  maxEntries: 900,
                   maxAgeSeconds: 60 * 60 * 24 * 14,
                 },
                 cacheableResponse: {

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import {
   Award,
   Check,
@@ -105,7 +106,12 @@ export const PostRoundView: React.FC<PostRoundViewProps> = ({
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 space-y-6">
+      <motion.main
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 space-y-6"
+      >
         {room.winReason && (
           <p className="text-sm sm:text-base text-slate-300">{room.winReason}</p>
         )}
@@ -289,7 +295,7 @@ export const PostRoundView: React.FC<PostRoundViewProps> = ({
             </button>
           </aside>
         </div>
-      </main>
+      </motion.main>
 
       {/* Sticky Bottom Rematch Bar */}
       <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0B0C14]/95 border-t border-[#222638] px-4 py-3 pb-safe">

@@ -28,22 +28,44 @@ interface TacticalMapProps {
   className?: string;
 }
 
-const TILE_CONFIG: Record<MapTheme, { url: string; attribution: string }> = {
-  standard: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap',
-  },
+interface ThemeTileSpec {
+  baseUrl: string;
+  overlayUrl?: string;
+  subdomains?: string;
+  attribution: string;
+  maxZoom: number;
+}
+
+const TILE_CONFIG: Record<MapTheme, ThemeTileSpec> = {
   night: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap',
+    baseUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    overlayUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, HERE, Garmin, OpenStreetMap',
+    maxZoom: 16,
+  },
+  standard: {
+    baseUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, HERE, Garmin, OpenStreetMap',
+    maxZoom: 19,
   },
   satellite: {
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    baseUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    overlayUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; Esri World Imagery',
+    maxZoom: 19,
   },
   snow: {
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap',
+    baseUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    overlayUrl:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, HERE, Garmin, OpenStreetMap',
+    maxZoom: 16,
   },
 };
 
@@ -64,12 +86,38 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const tileLayersRef = useRef<L.TileLayer[]>([]);
   const zoneLayerRef = useRef<L.LayerGroup | null>(null);
   const dynamicLayerRef = useRef<L.LayerGroup | null>(null);
   const zonePropsRef = useRef({ activeZone, editableZone, onZoneChange });
 
   zonePropsRef.current = { activeZone, editableZone, onZoneChange };
+
+  const applyThemeLayers = (map: L.Map, theme: MapTheme) => {
+    for (const layer of tileLayersRef.current) {
+      map.removeLayer(layer);
+    }
+    tileLayersRef.current = [];
+
+    const cfg = TILE_CONFIG[theme] ?? TILE_CONFIG.night;
+    const base = L.tileLayer(cfg.baseUrl, {
+      maxNativeZoom: cfg.maxZoom,
+      maxZoom: 19,
+      attribution: cfg.attribution,
+      ...(cfg.subdomains ? { subdomains: cfg.subdomains } : {}),
+    }).addTo(map);
+    base.bringToBack();
+    tileLayersRef.current.push(base);
+
+    if (cfg.overlayUrl) {
+      const overlay = L.tileLayer(cfg.overlayUrl, {
+        maxNativeZoom: cfg.maxZoom,
+        maxZoom: 19,
+        opacity: 0.92,
+      }).addTo(map);
+      tileLayersRef.current.push(overlay);
+    }
+  };
 
   // Mount Leaflet map once
   useEffect(() => {
@@ -82,11 +130,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       attributionControl: true,
     });
 
-    const cfg = TILE_CONFIG[mapTheme];
-    tileLayerRef.current = L.tileLayer(cfg.url, {
-      maxZoom: 19,
-      attribution: cfg.attribution,
-    }).addTo(map);
+    applyThemeLayers(map, mapTheme);
 
     zoneLayerRef.current = L.layerGroup().addTo(map);
     dynamicLayerRef.current = L.layerGroup().addTo(map);
@@ -113,24 +157,17 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       ro.disconnect();
       map.remove();
       mapRef.current = null;
-      tileLayerRef.current = null;
+      tileLayersRef.current = [];
       zoneLayerRef.current = null;
       dynamicLayerRef.current = null;
     };
   }, []);
 
-  // Swap tile source when mapTheme changes
+  // Swap tile source cleanly when mapTheme changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
-    }
-    const cfg = TILE_CONFIG[mapTheme];
-    tileLayerRef.current = L.tileLayer(cfg.url, {
-      maxZoom: 19,
-      attribution: cfg.attribution,
-    }).addTo(map);
+    applyThemeLayers(map, mapTheme);
   }, [mapTheme]);
 
   // Recenter when explicitly requested
@@ -147,13 +184,16 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
     if (!group) return;
     group.clearLayers();
 
+    const isLightMap = mapTheme === 'standard' || mapTheme === 'snow';
+    const zoneStroke = isLightMap ? '#059669' : '#10B981';
+
     if (activeZone.shape === 'circle') {
       L.circle([activeZone.center.lat, activeZone.center.lng], {
         radius: activeZone.diameterMeters / 2,
-        color: '#10B981',
-        weight: 2.5,
-        fillColor: '#10B981',
-        fillOpacity: 0.08,
+        color: zoneStroke,
+        weight: 2.8,
+        fillColor: zoneStroke,
+        fillOpacity: isLightMap ? 0.1 : 0.08,
       }).addTo(group);
 
       if (editableZone) {
@@ -161,9 +201,9 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
           draggable: true,
           icon: L.divIcon({
             className: 'fk-center-pin',
-            html: `<div style="width:30px;height:30px;border-radius:9999px;background:#10B981;border:3px solid #09090E;box-shadow:0 4px 14px rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;color:#09090E;font-weight:800;font-size:12px;">C</div>`,
-            iconSize: [30, 30],
-            iconAnchor: [15, 15],
+            html: `<div style="width:32px;height:32px;border-radius:9999px;background:#10B981;border:3px solid #09090E;box-shadow:0 4px 14px rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;color:#09090E;font-weight:800;font-size:12px;">C</div>`,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
           }),
         }).addTo(group);
 
@@ -179,10 +219,10 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       L.polygon(
         activeZone.polygon.map((p) => [p.lat, p.lng] as [number, number]),
         {
-          color: '#10B981',
-          weight: 2.5,
-          fillColor: '#10B981',
-          fillOpacity: 0.09,
+          color: zoneStroke,
+          weight: 2.8,
+          fillColor: zoneStroke,
+          fillOpacity: isLightMap ? 0.11 : 0.09,
         }
       ).addTo(group);
 
@@ -218,27 +258,27 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         L.circle([nextZonePreview.center.lat, nextZonePreview.center.lng], {
           radius: nextZonePreview.diameterMeters / 2,
           color: '#F59E0B',
-          weight: 2,
+          weight: 2.2,
           dashArray: '8 8',
           fillColor: '#F59E0B',
-          fillOpacity: 0.04,
+          fillOpacity: 0.05,
         }).addTo(group);
       } else if (nextZonePreview.shape === 'polygon' && nextZonePreview.polygon.length >= 3) {
         L.polygon(
           nextZonePreview.polygon.map((p) => [p.lat, p.lng] as [number, number]),
           {
             color: '#F59E0B',
-            weight: 2,
+            weight: 2.2,
             dashArray: '8 8',
             fillColor: '#F59E0B',
-            fillOpacity: 0.04,
+            fillOpacity: 0.05,
           }
         ).addTo(group);
       }
     }
-  }, [activeZone, nextZonePreview, editableZone]);
+  }, [activeZone, nextZonePreview, editableZone, mapTheme]);
 
-  // Render players, radar pings, and post-round trails
+  // Render players, animated radar pings, and post-round trails
   useEffect(() => {
     const group = dynamicLayerRef.current;
     if (!group) return;
@@ -252,7 +292,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
           {
             color: p.color,
             weight: 4,
-            opacity: 0.9,
+            opacity: 0.92,
             lineCap: 'round',
             lineJoin: 'round',
           }
@@ -260,13 +300,13 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       }
     }
 
-    // Radar Ping Snapshot markers (Hunters & Spectators see these with live ticking age)
+    // Radar Ping Snapshot markers with live animated ripple
     for (const ping of pings) {
       const ageSec = Math.max(0, Math.floor((nowMs - ping.pingedAt) / 1000));
       const ageLabel =
         ageSec < 60
-          ? `Pinged ${ageSec}s ago`
-          : `Pinged ${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`;
+          ? `${ageSec}s ago`
+          : `${Math.floor(ageSec / 60)}m ${ageSec % 60}s ago`;
 
       L.circle([ping.lat, ping.lng], {
         radius: 26,
@@ -279,18 +319,19 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       L.marker([ping.lat, ping.lng], {
         icon: L.divIcon({
           className: 'fk-ping-marker',
-          html: `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;">
-            <div style="width:14px;height:14px;border-radius:9999px;background:#06B6D4;border:2.5px solid #09090E;box-shadow:0 0 0 3px rgba(6,182,212,0.35);"></div>
-            <div style="margin-top:3px;padding:2px 6px;border-radius:6px;background:rgba(9,9,14,0.92);border:1px solid rgba(6,182,212,0.55);color:#E2E8F0;font-size:9.5px;line-height:1.2;text-align:center;white-space:nowrap;font-family:JetBrains Mono,monospace;"><div style="font-weight:700;color:#FFFFFF;">${escapeHtml(
+          html: `<div style="position:relative;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;">
+            <div class="fk-ping-ripple"></div>
+            <div style="width:14px;height:14px;border-radius:9999px;background:#06B6D4;border:2.5px solid #09090E;box-shadow:0 0 0 3px rgba(6,182,212,0.35);position:relative;z-index:2;"></div>
+            <div style="margin-top:4px;padding:2px 7px;border-radius:7px;background:rgba(9,10,16,0.94);border:1px solid rgba(34,211,238,0.55);color:#E2E8F0;font-size:9.5px;line-height:1.25;text-align:center;white-space:nowrap;font-family:JetBrains Mono,monospace;box-shadow:0 4px 12px rgba(0,0,0,0.45);"><div style="font-weight:700;color:#FFFFFF;">${escapeHtml(
               ping.playerName
-            )}</div><div style="color:#67E8F9;font-weight:600;">${ageLabel}</div></div>
+            )}</div><div style="color:#67E8F9;font-weight:600;">Ping · ${ageLabel}</div></div>
           </div>`,
           iconSize: [0, 0],
         }),
       }).addTo(group);
     }
 
-    // Live visible player markers (already filtered by strict fog-of-war)
+    // Live visible player markers with beacon pulse
     for (const item of visibleMarkers) {
       const { player, position, isExposedOob, isEmergencyPin, isDelayed } = item;
       const isSelf = player.id === viewerId;
@@ -302,9 +343,9 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         ? '#EF4444'
         : '#10B981';
       const subLabel = isEmergencyPin
-        ? 'SOS EMERGENCY'
+        ? 'SOS'
         : isExposedOob
-        ? 'EXPOSED (OOB)'
+        ? 'OOB'
         : isSelf
         ? 'YOU'
         : isDelayed
@@ -315,11 +356,16 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         zIndexOffset: isEmergencyPin ? 1000 : isSelf ? 500 : 100,
         icon: L.divIcon({
           className: 'fk-player-marker',
-          html: `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;">
-            <div style="width:${isSelf ? 20 : 16}px;height:${
+          html: `<div style="position:relative;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;">
+            ${
+              isSelf || isEmergencyPin || isExposedOob
+                ? `<div class="fk-player-pulse" style="background:${badgeColor};"></div>`
+                : ''
+            }
+            <div style="position:relative;z-index:2;width:${isSelf ? 20 : 16}px;height:${
             isSelf ? 20 : 16
-          }px;border-radius:9999px;background:${badgeColor};border:3px solid #FFFFFF;box-shadow:0 3px 12px rgba(0,0,0,0.7);"></div>
-            <div style="margin-top:4px;padding:2px 6px;border-radius:6px;background:rgba(9,9,14,0.92);border:1px solid ${badgeColor};color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;">${escapeHtml(
+          }px;border-radius:9999px;background:${badgeColor};border:3px solid #FFFFFF;box-shadow:0 3px 12px rgba(0,0,0,0.65);"></div>
+            <div style="margin-top:4px;padding:2px 7px;border-radius:7px;background:rgba(9,10,16,0.92);border:1px solid ${badgeColor};color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.45);">${escapeHtml(
               player.name
             )} <span style="color:${badgeColor};margin-left:3px;">${subLabel}</span></div>
           </div>`,
@@ -329,20 +375,17 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
     }
   }, [visibleMarkers, pings, showTrailsForPlayers, viewerId, nowMs]);
 
-  const themeClass =
-    mapTheme === 'night'
-      ? 'fk-map-night'
-      : mapTheme === 'snow'
-      ? 'fk-map-snow'
-      : '';
+  const themeClass = `fk-map-${mapTheme}`;
 
   return (
     <div
-      ref={containerRef}
       data-testid="tactical-map"
       data-theme={mapTheme}
-      className={`${className} ${themeClass} relative z-0`}
-    />
+      className={`${className} ${themeClass} relative overflow-hidden isolate z-0`}
+    >
+      {/* Keep className static on Leaflet mount element so React never wipes .leaflet-container */}
+      <div ref={containerRef} className="w-full h-full" />
+    </div>
   );
 };
 

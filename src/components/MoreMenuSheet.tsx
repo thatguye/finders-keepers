@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import {
   BookOpen,
   ChevronRight,
@@ -33,8 +34,8 @@ interface MoreMenuSheetProps {
 }
 
 const THEMES: { id: MapTheme; label: string }[] = [
-  { id: 'standard', label: 'Standard' },
   { id: 'night', label: 'Night' },
+  { id: 'standard', label: 'Street' },
   { id: 'satellite', label: 'Satellite' },
   { id: 'snow', label: 'Snow' },
 ];
@@ -59,13 +60,21 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
   const [view, setView] = useState<'main' | 'players'>('main');
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16 }}
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="More Options Menu"
     >
-      <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl bg-[#11131D] border-t sm:border border-[#272C40] p-5 pb-safe shadow-2xl max-h-[85dvh] overflow-y-auto">
+      <motion.div
+        initial={{ opacity: 0, y: 28, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl bg-[#11131D] border-t sm:border border-white/10 p-5 pb-safe shadow-2xl max-h-[85dvh] overflow-y-auto"
+      >
         <div className="w-10 h-1 bg-slate-700 rounded-full mx-auto mb-4 sm:hidden" />
 
         <div className="flex items-center justify-between mb-4">
@@ -277,7 +286,7 @@ export const MoreMenuSheet: React.FC<MoreMenuSheetProps> = ({
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

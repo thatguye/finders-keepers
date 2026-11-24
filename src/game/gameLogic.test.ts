@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   computeNextZone,
   createDefaultPolygonAround,
+  formatDistance,
+  formatZoneSize,
   haversineMeters,
   isPointInCircle,
   isPointInPolygon,
@@ -279,4 +281,14 @@ test('Solo demo room spawns bots and moves them cleanly over time', () => {
   const moved = stepSoloBots({ ...demo, phase: 'hunt' }, 3, 4000);
   const botMovedDist = totalPathDistanceMeters(moved.players[2].trail);
   assert.ok(botMovedDist > 10, `Expected AI bot to move >10m, moved ${botMovedDist}m`);
+});
+
+test('US imperial units (miles & feet) are the default across settings and formatters', () => {
+  const settings = createDefaultSettings(DEFAULT_COORDS);
+  assert.equal(settings.units, 'mi');
+  assert.equal(formatZoneSize(settings.zone.diameterMeters), '2.0 mi');
+  assert.equal(formatZoneSize(400), '1,310 ft');
+  assert.equal(formatDistance(1609.344), '1.00 mi');
+  assert.equal(formatDistance(100), '328 ft');
+  assert.equal(formatDistance(1500, 'km'), '1.50 km');
 });

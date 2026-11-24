@@ -31,8 +31,8 @@ export function createSoloDemoRoom(
   settings.roundLengthMin = 15;
   settings.pingIntervalMin = 1;
   settings.headStartMin = 0.25; // 15 seconds fast scatter in solo demo so players feel both phases quickly
-  settings.zone.diameterMeters = 900;
-  settings.finalZoneDiameterMeters = 280;
+  settings.zone.diameterMeters = 805; // 0.5 mi
+  settings.finalZoneDiameterMeters = 244; // 800 ft
   settings.zoneShrinkEnabled = true;
 
   const userPlayer: PlayerState = {

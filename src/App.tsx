@@ -859,13 +859,23 @@ export default function App() {
       durationSec,
       ts: Date.now(),
     };
+    if (room.isSoloDemo) {
+      if (!stealthRef.current) {
+        playRadioBase64(audioBase64, mimeType);
+      }
+      setRadioStatusText(`Radio Check · Playing back (${durationSec.toFixed(1)}s)`);
+      window.setTimeout(
+        () => setRadioStatusText(null),
+        Math.max(2400, Math.round(durationSec * 1000) + 900)
+      );
+      return;
+    }
+
     setRadioStatusText(
       `Sent to ${me.role === 'hunter' ? 'Hunters' : 'Runners'} Radio (${durationSec.toFixed(1)}s)`
     );
     window.setTimeout(() => setRadioStatusText(null), 2200);
-    if (!room.isSoloDemo) {
-      void supabaseSync.sendRadioPacket(packet);
-    }
+    void supabaseSync.sendRadioPacket(packet);
   };
 
   const handleTriggerRoomEmergency = (address: string) => {
@@ -1165,6 +1175,7 @@ export default function App() {
             flashColor={flashColor}
             radioStatusText={radioStatusText}
             onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
+            onChangeMapTheme={handleChangeMapTheme}
             onOpenMoreMenu={() => setShowMoreMenu(true)}
             onRunnerGotTagged={handleRunnerGotTagged}
             onTagBotInSolo={handleTagBotInSolo}
@@ -1239,7 +1250,7 @@ export default function App() {
       {showProfileModal && (
         <ProfileModal
           profile={profile}
-          units={room?.settings.units ?? 'km'}
+          units={room?.settings.units ?? 'mi'}
           onClose={() => setShowProfileModal(false)}
         />
       )}

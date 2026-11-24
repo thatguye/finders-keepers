@@ -255,35 +255,142 @@ export async function reverseGeocodeAddress(lat: number, lng: number): Promise<s
 }
 
 /**
- * Low-bitrate Walkie-Talkie voice clip recorder (capped at 10 seconds for weak cellular links).
+ * Subtle walkie-talkie PTT chirp when keying up or releasing transmission.
+ */
+export function playRadioKeyTone(kind: 'start' | 'end'): void {
+  try {
+    unlockAudioSession();
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    if (kind === 'start') {
+      osc.frequency.setValueAtTime(920, now);
+      osc.frequency.exponentialRampToValueAtTime(1280, now + 0.055);
+    } else {
+      osc.frequency.setValueAtTime(1180, now);
+      osc.frequency.exponentialRampToValueAtTime(780, now + 0.085);
+    }
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.09, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (kind === 'start' ? 0.065 : 0.095));
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.11);
+  } catch {
+    // ignore Web Audio failures
+  }
+}
+
+/**
+ * Low-bitrate Walkie-Talkie voice clip recorder (capped at 10 seconds for weak cellular links)
+ * with live AudioContext AnalyserNode level metering for real-time waveform animations.
  */
 export interface ActiveRecorder {
   stop: () => Promise<{ base64: string; mimeType: string; durationSec: number } | null>;
   cancel: () => void;
 }
 
-export async function startRadioRecording(maxSeconds = 10): Promise<ActiveRecorder | null> {
+export interface RadioStartResult {
+  recorder: ActiveRecorder | null;
+  error?: 'permission_denied' | 'no_device' | 'unsupported';
+}
+
+export async function startRadioRecording(
+  maxSeconds = 10,
+  onAudioLevel?: (level: number) => void
+): Promise<RadioStartResult> {
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.mediaDevices?.getUserMedia ||
+    typeof MediaRecorder === 'undefined'
+  ) {
+    return { recorder: null, error: 'unsupported' };
+  }
+
+  let stream: MediaStream;
   try {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      return null;
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
+        autoGainControl: true,
         channelCount: 1,
       },
     });
-    const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : '';
+    if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+      return { recorder: null, error: 'permission_denied' };
+    }
+    return { recorder: null, error: 'no_device' };
+  }
+
+  try {
+    const mimeCandidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+    ];
     const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || '';
     const recorder = new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
-      audioBitsPerSecond: 16000,
+      audioBitsPerSecond: 12000,
     });
+
+    // Live voice level metering for animated waveform
+    let meterRaf: number | null = null;
+    let meterSource: MediaStreamAudioSourceNode | null = null;
+    if (onAudioLevel) {
+      try {
+        unlockAudioSession();
+        if (audioCtx) {
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          analyser.smoothingTimeConstant = 0.72;
+          meterSource = audioCtx.createMediaStreamSource(stream);
+          meterSource.connect(analyser);
+          const bins = new Uint8Array(analyser.frequencyBinCount);
+          const sample = () => {
+            analyser.getByteTimeDomainData(bins);
+            let peak = 0;
+            for (let i = 0; i < bins.length; i++) {
+              const v = Math.abs(bins[i] - 128) / 128;
+              if (v > peak) peak = v;
+            }
+            onAudioLevel(Math.min(1, peak * 2.6));
+            meterRaf = requestAnimationFrame(sample);
+          };
+          meterRaf = requestAnimationFrame(sample);
+        }
+      } catch {
+        // Metering optional; recording still works
+      }
+    }
+
+    const stopMeter = () => {
+      if (meterRaf !== null) {
+        cancelAnimationFrame(meterRaf);
+        meterRaf = null;
+      }
+      if (meterSource) {
+        try {
+          meterSource.disconnect();
+        } catch {
+          // ignore
+        }
+        meterSource = null;
+      }
+      onAudioLevel?.(0);
+    };
 
     const chunks: Blob[] = [];
     const startedAt = Date.now();
-    let finished = false;
+    let cancelled = false;
     let resolveStop:
       | ((val: { base64: string; mimeType: string; durationSec: number } | null) => void)
       | null = null;
@@ -293,24 +400,30 @@ export async function startRadioRecording(maxSeconds = 10): Promise<ActiveRecord
     };
 
     recorder.onstop = () => {
+      stopMeter();
       stream.getTracks().forEach((t) => t.stop());
-      if (finished && !resolveStop) return;
-      const durationSec = Math.max(0.4, (Date.now() - startedAt) / 1000);
-      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+      if (cancelled) {
+        resolveStop?.(null);
+        return;
+      }
+      const durationSec = Math.max(0.3, (Date.now() - startedAt) / 1000);
+      const effectiveMime = recorder.mimeType || mimeType || 'audio/webm';
+      const blob = new Blob(chunks, { type: effectiveMime });
+      if (blob.size === 0) {
+        resolveStop?.(null);
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         const result = typeof reader.result === 'string' ? reader.result : '';
         const base64 = result.includes(',') ? result.split(',')[1] : result;
-        resolveStop?.(
-          base64
-            ? { base64, mimeType: mimeType || 'audio/webm', durationSec }
-            : null
-        );
+        resolveStop?.(base64 ? { base64, mimeType: effectiveMime, durationSec } : null);
       };
+      reader.onerror = () => resolveStop?.(null);
       reader.readAsDataURL(blob);
     };
 
-    recorder.start(250);
+    recorder.start(200);
     const maxTimer = window.setTimeout(() => {
       if (recorder.state === 'recording') {
         recorder.stop();
@@ -318,36 +431,53 @@ export async function startRadioRecording(maxSeconds = 10): Promise<ActiveRecord
     }, maxSeconds * 1000);
 
     return {
-      stop: () =>
-        new Promise((resolve) => {
+      recorder: {
+        stop: () =>
+          new Promise((resolve) => {
+            window.clearTimeout(maxTimer);
+            resolveStop = resolve;
+            if (recorder.state === 'recording') {
+              recorder.stop();
+            } else {
+              stopMeter();
+              stream.getTracks().forEach((t) => t.stop());
+              resolve(null);
+            }
+          }),
+        cancel: () => {
           window.clearTimeout(maxTimer);
-          resolveStop = resolve;
+          cancelled = true;
+          resolveStop = null;
+          stopMeter();
           if (recorder.state === 'recording') {
             recorder.stop();
-          } else {
-            resolve(null);
           }
-        }),
-      cancel: () => {
-        window.clearTimeout(maxTimer);
-        finished = true;
-        resolveStop = null;
-        if (recorder.state === 'recording') {
-          recorder.stop();
-        }
-        stream.getTracks().forEach((t) => t.stop());
+          stream.getTracks().forEach((t) => t.stop());
+        },
       },
     };
   } catch {
-    return null;
+    stream.getTracks().forEach((t) => t.stop());
+    return { recorder: null, error: 'unsupported' };
   }
 }
 
 export function playRadioBase64(base64: string, mimeType: string): void {
   try {
     unlockAudioSession();
-    const audio = new Audio(`data:${mimeType};base64,${base64}`);
-    void audio.play();
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: mimeType || 'audio/webm' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.onerror = () => URL.revokeObjectURL(url);
+    void audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+    });
   } catch {
     // ignore playback rejection
   }

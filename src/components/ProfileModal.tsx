@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { Award, Medal, Trophy, X } from 'lucide-react';
 import type { CareerProfile, UnitSystem } from '../types/game';
 import { BADGE_DEFINITIONS } from '../game/rules';
@@ -18,13 +19,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [tab, setTab] = useState<'stats' | 'badges' | 'leaderboard'>('stats');
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Career Profile and Achievements"
     >
-      <div className="w-full max-w-lg max-h-[88dvh] flex flex-col rounded-2xl bg-[#11131D] border border-[#272C40] shadow-2xl overflow-hidden">
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+        className="w-full max-w-lg max-h-[88dvh] flex flex-col rounded-2xl bg-[#11131D] border border-white/10 shadow-2xl overflow-hidden"
+      >
         <div className="p-5 border-b border-[#222638] flex items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold text-white">
@@ -58,13 +67,18 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`min-h-[40px] rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-                  tab === t.id
-                    ? 'bg-[#1D2132] text-white'
-                    : 'text-slate-400 hover:text-slate-200'
+                className={`relative min-h-[40px] rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                  tab === t.id ? 'text-white' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {t.label}
+                {tab === t.id && (
+                  <motion.span
+                    layoutId="profile-tab-bg"
+                    transition={{ type: 'spring', stiffness: 460, damping: 34 }}
+                    className="absolute inset-0 rounded-lg bg-[#1D2132]"
+                  />
+                )}
+                <span className="relative z-10">{t.label}</span>
               </button>
             ))}
           </div>
@@ -190,7 +204,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };

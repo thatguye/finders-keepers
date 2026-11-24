@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { AlertTriangle, MapPin, PhoneCall, ShieldAlert, X } from 'lucide-react';
 import type { LatLng } from '../types/game';
 import { reverseGeocodeAddress } from '../services/hardware';
@@ -73,13 +74,21 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16 }}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Get Help Emergency Screen"
     >
-      <div className="w-full max-w-md rounded-2xl bg-[#121015] border border-red-500/40 p-6 shadow-2xl">
+      <motion.div
+        initial={{ opacity: 0, y: 18, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+        className="w-full max-w-md rounded-2xl bg-[#121015] border border-red-500/40 p-6 shadow-2xl"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center shrink-0">
@@ -100,22 +109,23 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
           </button>
         </div>
 
-        {/* One-tap Emergency Call Buttons */}
-        <div className="mt-5 grid grid-cols-2 gap-3">
+        {/* One-tap Emergency Call Button (US 911 primary) */}
+        <div className="mt-5 space-y-2">
           <a
             href="tel:911"
-            className="min-h-[54px] flex items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-base transition-colors"
+            className="w-full min-h-[56px] flex items-center justify-center gap-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-base shadow-lg shadow-red-600/25 transition-colors"
           >
             <PhoneCall className="w-5 h-5" />
             <span>Call 911</span>
           </a>
-          <a
-            href="tel:112"
-            className="min-h-[54px] flex items-center justify-center gap-2 rounded-xl bg-[#24161A] hover:bg-[#311B22] border border-red-500/50 text-red-100 font-bold text-base transition-colors"
-          >
-            <PhoneCall className="w-5 h-5" />
-            <span>Call 112</span>
-          </a>
+          <div className="text-center">
+            <a
+              href="tel:112"
+              className="text-xs font-medium text-slate-400 hover:text-red-200 underline underline-offset-2"
+            >
+              Outside the US? Call 112
+            </a>
+          </div>
         </div>
 
         {/* Exact Street Address & Raw Coordinates */}
@@ -169,7 +179,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({
             </p>
           </div>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
