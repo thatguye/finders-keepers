@@ -1,0 +1,354 @@
+export type TacticalAlertType =
+  | 'head_start_end'
+  | 'radar_ping'
+  | 'zone_shrink'
+  | 'tagged'
+  | 'oob_warning'
+  | 'emergency'
+  | 'radio_rx'
+  | 'victory';
+
+export type FlashColor = 'emerald' | 'amber' | 'crimson' | 'cyan';
+
+let audioCtx: AudioContext | null = null;
+let wakeLockSentinel: WakeLockSentinel | null = null;
+let torchStream: MediaStream | null = null;
+
+/**
+ * Call on first user tap so iOS Safari plays tactical alerts even when hardware mute switch is on
+ * (when Stealth Haptic Mode is OFF).
+ */
+export function unlockAudioSession(): void {
+  try {
+    const nav = navigator as Navigator & { audioSession?: { type: string } };
+    if ('audioSession' in nav && nav.audioSession) {
+      nav.audioSession.type = 'playback';
+    }
+  } catch {
+    // unsupported browser
+  }
+  try {
+    if (!audioCtx && typeof window !== 'undefined') {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (Ctx) {
+        audioCtx = new Ctx();
+      }
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      void audioCtx.resume();
+    }
+  } catch {
+    // ignore audio init errors
+  }
+}
+
+const VIBRATE_PATTERNS: Record<TacticalAlertType, number[]> = {
+  head_start_end: [140, 80, 140, 80, 260],
+  radar_ping: [70, 60, 70],
+  zone_shrink: [120, 80, 120],
+  tagged: [220, 100, 220],
+  oob_warning: [90, 50, 90, 50, 90],
+  emergency: [300, 100, 300, 100, 400],
+  radio_rx: [50],
+  victory: [100, 60, 100, 60, 240],
+};
+
+const FLASH_COLORS: Record<TacticalAlertType, FlashColor> = {
+  head_start_end: 'amber',
+  radar_ping: 'cyan',
+  zone_shrink: 'amber',
+  tagged: 'crimson',
+  oob_warning: 'crimson',
+  emergency: 'crimson',
+  radio_rx: 'emerald',
+  victory: 'emerald',
+};
+
+export function triggerTacticalAlert(
+  type: TacticalAlertType,
+  stealthHapticMode: boolean,
+  onVisualFlash?: (color: FlashColor) => void
+): void {
+  // Always flash visual screen-edge indicator in stealth mode or for critical events
+  if (stealthHapticMode || type === 'emergency' || type === 'oob_warning' || type === 'tagged') {
+    onVisualFlash?.(FLASH_COLORS[type]);
+  }
+
+  // Trigger distinct haptic pattern when stealth mode is active (or emergency)
+  if (
+    typeof navigator !== 'undefined' &&
+    typeof navigator.vibrate === 'function' &&
+    (stealthHapticMode || type === 'emergency' || type === 'tagged')
+  ) {
+    try {
+      navigator.vibrate(VIBRATE_PATTERNS[type]);
+    } catch {
+      // ignore
+    }
+  }
+
+  // In Stealth Haptic Mode, NEVER play audible sound (except real emergency alert!)
+  if (stealthHapticMode && type !== 'emergency') {
+    return;
+  }
+
+  playSynthChime(type);
+}
+
+function playSynthChime(type: TacticalAlertType): void {
+  try {
+    unlockAudioSession();
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+
+    const tone = (
+      freq: number,
+      startOffset: number,
+      duration: number,
+      wave: OscillatorType = 'sine',
+      gainPeak = 0.14
+    ) => {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = wave;
+      osc.frequency.setValueAtTime(freq, now + startOffset);
+      gain.gain.setValueAtTime(0.0001, now + startOffset);
+      gain.gain.exponentialRampToValueAtTime(gainPeak, now + startOffset + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + startOffset + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now + startOffset);
+      osc.stop(now + startOffset + duration + 0.02);
+    };
+
+    switch (type) {
+      case 'radar_ping':
+        tone(980, 0, 0.22, 'sine', 0.12);
+        tone(1480, 0.11, 0.26, 'sine', 0.08);
+        break;
+      case 'head_start_end':
+        tone(520, 0, 0.14, 'triangle', 0.16);
+        tone(660, 0.16, 0.14, 'triangle', 0.16);
+        tone(880, 0.32, 0.32, 'triangle', 0.18);
+        break;
+      case 'zone_shrink':
+        tone(440, 0, 0.18, 'sawtooth', 0.08);
+        tone(370, 0.2, 0.24, 'sawtooth', 0.08);
+        break;
+      case 'tagged':
+        tone(600, 0, 0.12, 'square', 0.1);
+        tone(420, 0.13, 0.25, 'square', 0.1);
+        break;
+      case 'oob_warning':
+        tone(760, 0, 0.1, 'sawtooth', 0.09);
+        tone(760, 0.14, 0.1, 'sawtooth', 0.09);
+        break;
+      case 'emergency':
+        tone(880, 0, 0.22, 'sawtooth', 0.18);
+        tone(660, 0.24, 0.22, 'sawtooth', 0.18);
+        tone(880, 0.48, 0.26, 'sawtooth', 0.18);
+        break;
+      case 'radio_rx':
+        tone(1200, 0, 0.06, 'sine', 0.07);
+        break;
+      case 'victory':
+        tone(523.25, 0, 0.14, 'triangle', 0.14);
+        tone(659.25, 0.14, 0.14, 'triangle', 0.14);
+        tone(783.99, 0.28, 0.18, 'triangle', 0.16);
+        tone(1046.5, 0.46, 0.34, 'triangle', 0.16);
+        break;
+    }
+  } catch {
+    // ignore Web Audio failures
+  }
+}
+
+export async function acquireWakeLock(): Promise<boolean> {
+  try {
+    if ('wakeLock' in navigator && navigator.wakeLock) {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      wakeLockSentinel.addEventListener('release', () => {
+        wakeLockSentinel = null;
+      });
+      return true;
+    }
+  } catch {
+    // unsupported or page hidden
+  }
+  return false;
+}
+
+export async function releaseWakeLock(): Promise<void> {
+  try {
+    if (wakeLockSentinel) {
+      await wakeLockSentinel.release();
+      wakeLockSentinel = null;
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Attempts hardware rear-camera flashlight torch; returns 'hardware' if camera torch enabled,
+ * 'screen' if caller should render the full-screen white screen-torch fallback.
+ */
+export async function enableFlashlightTorch(): Promise<'hardware' | 'screen'> {
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) return 'screen';
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+    const track = stream.getVideoTracks()[0];
+    if (!track) {
+      stream.getTracks().forEach((t) => t.stop());
+      return 'screen';
+    }
+    const caps = track.getCapabilities ? (track.getCapabilities() as { torch?: boolean }) : {};
+    if (caps.torch) {
+      await track.applyConstraints({
+        advanced: [{ torch: true } as MediaTrackConstraintSet],
+      });
+      torchStream = stream;
+      return 'hardware';
+    }
+    stream.getTracks().forEach((t) => t.stop());
+    return 'screen';
+  } catch {
+    return 'screen';
+  }
+}
+
+export function disableFlashlightTorch(): void {
+  if (torchStream) {
+    torchStream.getTracks().forEach((t) => t.stop());
+    torchStream = null;
+  }
+}
+
+/**
+ * Free OpenStreetMap Nominatim reverse geocoding (zero API keys) for Emergency Screen.
+ */
+export async function reverseGeocodeAddress(lat: number, lng: number): Promise<string> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+      lat.toFixed(6)
+    )}&lon=${encodeURIComponent(lng.toFixed(6))}`;
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error('Geocoder unavailable');
+    const data = (await res.json()) as { display_name?: string };
+    return data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  } catch {
+    return `GPS Lock: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/**
+ * Low-bitrate Walkie-Talkie voice clip recorder (capped at 10 seconds for weak cellular links).
+ */
+export interface ActiveRecorder {
+  stop: () => Promise<{ base64: string; mimeType: string; durationSec: number } | null>;
+  cancel: () => void;
+}
+
+export async function startRadioRecording(maxSeconds = 10): Promise<ActiveRecorder | null> {
+  try {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      return null;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        channelCount: 1,
+      },
+    });
+    const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const recorder = new MediaRecorder(stream, {
+      ...(mimeType ? { mimeType } : {}),
+      audioBitsPerSecond: 16000,
+    });
+
+    const chunks: Blob[] = [];
+    const startedAt = Date.now();
+    let finished = false;
+    let resolveStop:
+      | ((val: { base64: string; mimeType: string; durationSec: number } | null) => void)
+      | null = null;
+
+    recorder.ondataavailable = (ev) => {
+      if (ev.data.size > 0) chunks.push(ev.data);
+    };
+
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (finished && !resolveStop) return;
+      const durationSec = Math.max(0.4, (Date.now() - startedAt) / 1000);
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolveStop?.(
+          base64
+            ? { base64, mimeType: mimeType || 'audio/webm', durationSec }
+            : null
+        );
+      };
+      reader.readAsDataURL(blob);
+    };
+
+    recorder.start(250);
+    const maxTimer = window.setTimeout(() => {
+      if (recorder.state === 'recording') {
+        recorder.stop();
+      }
+    }, maxSeconds * 1000);
+
+    return {
+      stop: () =>
+        new Promise((resolve) => {
+          window.clearTimeout(maxTimer);
+          resolveStop = resolve;
+          if (recorder.state === 'recording') {
+            recorder.stop();
+          } else {
+            resolve(null);
+          }
+        }),
+      cancel: () => {
+        window.clearTimeout(maxTimer);
+        finished = true;
+        resolveStop = null;
+        if (recorder.state === 'recording') {
+          recorder.stop();
+        }
+        stream.getTracks().forEach((t) => t.stop());
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function playRadioBase64(base64: string, mimeType: string): void {
+  try {
+    unlockAudioSession();
+    const audio = new Audio(`data:${mimeType};base64,${base64}`);
+    void audio.play();
+  } catch {
+    // ignore playback rejection
+  }
+}
