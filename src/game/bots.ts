@@ -22,7 +22,7 @@ export function createSoloDemoRoom(
   userId: string,
   userName: string,
   userPos: LatLng = DEFAULT_COORDS,
-  userRolePref: 'hunter' | 'runner' = 'hunter',
+  userRolePref: 'hunter' | 'runner' | 'random' = 'hunter',
   mode: RoomState['settings']['mode'] = 'classic',
   nowMs: number = Date.now()
 ): RoomState {
@@ -35,13 +35,16 @@ export function createSoloDemoRoom(
   settings.finalZoneDiameterMeters = 244; // 800 ft
   settings.zoneShrinkEnabled = true;
 
+  const resolvedUserRole: 'hunter' | 'runner' =
+    userRolePref === 'random' ? (Math.random() < 0.5 ? 'hunter' : 'runner') : userRolePref;
+
   const userPlayer: PlayerState = {
     id: userId,
     name: userName || 'Agent One',
     isHost: true,
     isBot: false,
     preference: userRolePref,
-    role: userRolePref,
+    role: resolvedUserRole,
     eliminated: false,
     tagsCount: 0,
     color: PLAYER_COLORS[0],
@@ -58,7 +61,7 @@ export function createSoloDemoRoom(
     const bearing = (idx * 360) / botCount + 25;
     const dist = 190 + idx * 42;
     const pos = movePointByBearing(userPos, dist, bearing);
-    const pref = idx === 0 && userRolePref === 'runner' ? 'hunter' : idx === 1 ? 'hunter' : 'runner';
+    const pref = idx === 0 && resolvedUserRole === 'runner' ? 'hunter' : idx === 1 ? 'hunter' : 'runner';
     return {
       id: `bot_${idx + 1}`,
       name: `${BOT_NAMES[idx]} (AI)`,
@@ -79,10 +82,10 @@ export function createSoloDemoRoom(
   });
 
   const assigned = assignTeams([userPlayer, ...bots], mode);
-  // Guarantee user gets their selected demo preference
+  // Guarantee user gets their resolved demo role while keeping their original preference (e.g. 'random')
   const fixedPlayers = assigned.map((p) => {
     if (p.id === userId) {
-      return { ...p, role: userRolePref, initialRole: userRolePref };
+      return { ...p, preference: userRolePref, role: resolvedUserRole, initialRole: resolvedUserRole };
     }
     return p;
   });
@@ -120,6 +123,24 @@ export function createSoloDemoRoom(
     players: fixedPlayers,
     pings: [],
     tags: [],
+    chatMessages: [
+      {
+        id: `msg_welcome_${nowMs}`,
+        scope: 'team',
+        team: resolvedUserRole,
+        senderId: fixedPlayers.find((p) => p.isBot && p.role === resolvedUserRole)?.id ?? 'bot_2',
+        senderName:
+          fixedPlayers.find((p) => p.isBot && p.role === resolvedUserRole)?.name ?? 'Kestrel (AI)',
+        senderColor:
+          fixedPlayers.find((p) => p.isBot && p.role === resolvedUserRole)?.color ?? '#06B6D4',
+        kind: 'text',
+        text:
+          resolvedUserRole === 'hunter'
+            ? 'Scanning sector — ready for the first radar ping.'
+            : 'Scattering into cover — watch the zone edge.',
+        ts: nowMs,
+      },
+    ],
     roundStartedAt: nowMs,
     headStartEndsAt: nowMs + headStartMs,
     roundEndsAt: nowMs + headStartMs + roundDurationMs,

@@ -81,25 +81,16 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "index.html",
-    "revision": "0.4nokabbm97"
+    "revision": "0.rsvpbr4ahn"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
     allowlist: [/^\/$/]
   }));
-  workbox.registerRoute(/^https:\/\/tile\.openstreetmap\.org\/.*/i, new workbox.CacheFirst({
-    "cacheName": "osm-tiles-cache",
-    plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 600,
-      maxAgeSeconds: 1209600
-    }), new workbox.CacheableResponsePlugin({
-      statuses: [0, 200]
-    })]
-  }), 'GET');
   workbox.registerRoute(/^https:\/\/server\.arcgisonline\.com\/.*/i, new workbox.CacheFirst({
-    "cacheName": "esri-satellite-cache",
+    "cacheName": "esri-map-tiles-cache",
     plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 400,
+      maxEntries: 900,
       maxAgeSeconds: 1209600
     }), new workbox.CacheableResponsePlugin({
       statuses: [0, 200]

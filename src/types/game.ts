@@ -154,6 +154,7 @@ export interface RoomState {
   players: PlayerState[];
   pings: RadarPing[];
   tags: TagEvent[];
+  chatMessages?: ChatMessage[];
   roundStartedAt: number | null;
   headStartEndsAt: number | null;
   roundEndsAt: number | null;
@@ -214,13 +215,19 @@ export interface CareerProfile {
   leaderboard: LeaderboardEntry[];
 }
 
-export interface RadioPacket {
+export type ChatScope = 'team' | 'global';
+
+export interface ChatMessage {
   id: string;
+  scope: ChatScope;
+  team: TeamRole;
   senderId: string;
   senderName: string;
-  team: 'hunter' | 'runner';
-  audioBase64: string;
-  mimeType: string;
-  durationSec: number;
+  senderColor: string;
+  kind: 'text' | 'voice';
+  text?: string;
+  audioBase64?: string;
+  mimeType?: string;
+  durationSec?: number;
   ts: number;
 }

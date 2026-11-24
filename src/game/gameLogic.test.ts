@@ -19,13 +19,18 @@ import {
   createDefaultSettings,
   DEFAULT_COORDS,
   evaluateOobState,
+  filterVisibleChatMessages,
   filterVisiblePlayers,
+  formatRealDateTime,
   generateRoomCode,
+  getCallsignInitial,
   processTag,
+  resolveReleaseTimestamps,
+  shouldShowRoleReveal,
   shouldThrottleGpsUpload,
 } from './rules';
 import { createSoloDemoRoom, stepSoloBots } from './bots';
-import type { PlayerState, RoomState } from '../types/game';
+import type { ChatMessage, PlayerState, RoomState } from '../types/game';
 
 function makePlayer(id: string, pref: PlayerState['preference'] = 'random'): PlayerState {
   return {
@@ -292,3 +297,82 @@ test('US imperial units (miles & feet) are the default across settings and forma
   assert.equal(formatDistance(100), '328 ft');
   assert.equal(formatDistance(1500, 'km'), '1.50 km');
 });
+
+test('getCallsignInitial extracts first uppercase letter and filterVisibleChatMessages isolates teams', () => {
+  assert.equal(getCallsignInitial('ghostRunner'), 'G');
+  assert.equal(getCallsignInitial('  viper  '), 'V');
+  assert.equal(getCallsignInitial(''), 'A');
+
+  const hunter: PlayerState = { ...makePlayer('h1', 'hunter'), role: 'hunter' };
+  const runner: PlayerState = { ...makePlayer('r1', 'runner'), role: 'runner' };
+  const msgs: ChatMessage[] = [
+    {
+      id: 'm1',
+      scope: 'team',
+      team: 'hunter',
+      senderId: 'h1',
+      senderName: 'Hunter One',
+      senderColor: '#EF4444',
+      kind: 'text',
+      text: 'Flank north',
+      ts: 1,
+    },
+    {
+      id: 'm2',
+      scope: 'team',
+      team: 'runner',
+      senderId: 'r1',
+      senderName: 'Runner One',
+      senderColor: '#10B981',
+      kind: 'voice',
+      audioBase64: 'AAA',
+      durationSec: 2,
+      ts: 2,
+    },
+    {
+      id: 'm3',
+      scope: 'global',
+      team: 'runner',
+      senderId: 'r1',
+      senderName: 'Runner One',
+      senderColor: '#10B981',
+      kind: 'text',
+      text: 'Good luck everyone!',
+      ts: 3,
+    },
+  ];
+
+  assert.deepEqual(
+    filterVisibleChatMessages(msgs, hunter, 'hunt').map((m) => m.id),
+    ['m1', 'm3']
+  );
+  assert.deepEqual(
+    filterVisibleChatMessages(msgs, runner, 'hunt').map((m) => m.id),
+    ['m2', 'm3']
+  );
+  assert.deepEqual(
+    filterVisibleChatMessages(msgs, hunter, 'lobby').map((m) => m.id),
+    ['m1', 'm2', 'm3']
+  );
+});
+
+test('shouldShowRoleReveal gates on random preference and resolveReleaseTimestamps persists real dates/times', () => {
+  assert.equal(shouldShowRoleReveal(makePlayer('p1', 'random')), true);
+  assert.equal(shouldShowRoleReveal(makePlayer('p2', 'hunter')), false);
+  assert.equal(shouldShowRoleReveal(makePlayer('p3', 'runner')), false);
+
+  const now = new Date('2026-04-18T16:30:00Z').getTime();
+  const resolved = resolveReleaseTimestamps(
+    [
+      { version: '1.5', offsetMinutesAgo: 0 },
+      { version: '1.4', offsetMinutesAgo: 30 },
+    ],
+    now,
+    { '1.4': now - 90 * 60_000 }
+  );
+  assert.equal(resolved['1.5'], now);
+  assert.equal(resolved['1.4'], now - 90 * 60_000);
+  const formatted = formatRealDateTime(resolved['1.5']);
+  assert.ok(formatted.includes('·') && /\d{1,2}:\d{2}/.test(formatted), `Expected real date & time, got ${formatted}`);
+});
+

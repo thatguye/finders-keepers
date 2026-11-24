@@ -250,7 +250,7 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
                     <strong className="text-white">Team Flip on Tag:</strong> When a Runner confirms
                     being tagged (or times out of bounds), they immediately convert into a{' '}
                     <strong className="text-red-300">Hunter</strong>, gain Hunter radar &amp; Hunters
-                    Radio access, and join the chase.
+                    Team Chat access, and join the chase.
                   </li>
                   <li>
                     <strong className="text-white">Scoring Bonus:</strong> Converted players still
@@ -382,9 +382,10 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               <div className="rounded-xl bg-[#161926] border border-[#252A3D] p-3 flex items-start gap-2.5">
                 <Mic className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold text-white">Team Walkie-Talkie</div>
+                  <div className="font-bold text-white">Team &amp; Global Chat + Voice</div>
                   <p className="text-slate-300 mt-0.5">
-                    Hold to send up to 10s encrypted voice clips heard only by your team.
+                    Chat privately with your team or globally with everyone, and send playable 10s
+                    voice messages right inside the feed.
                   </p>
                 </div>
               </div>

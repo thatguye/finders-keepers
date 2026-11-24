@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BadgeId,
   CareerProfile,
+  ChatMessage,
+  ChatScope,
   CustomPreset,
   EmergencyAlert,
   GameMode,
@@ -10,7 +12,6 @@ import type {
   MapTheme,
   PlayerState,
   RadarPing,
-  RadioPacket,
   RoomSettings,
   RoomState,
   TeamPreference,
@@ -28,9 +29,11 @@ import {
   createDefaultSettings,
   DEFAULT_COORDS,
   evaluateOobState,
+  filterVisibleChatMessages,
   generateRoomCode,
   PLAYER_COLORS,
   processTag,
+  shouldShowRoleReveal,
   shouldThrottleGpsUpload,
 } from './game/rules';
 import { createSoloDemoRoom, stepSoloBots } from './game/bots';
@@ -50,7 +53,6 @@ import { supabaseSync } from './services/supabaseSync';
 import {
   acquireWakeLock,
   type FlashColor,
-  playRadioBase64,
   releaseWakeLock,
   triggerTacticalAlert,
   unlockAudioSession,
@@ -59,12 +61,14 @@ import { HomeView } from './components/HomeView';
 import { LobbyView } from './components/LobbyView';
 import { ActiveGameView } from './components/ActiveGameView';
 import { PostRoundView } from './components/PostRoundView';
+import { ChatDrawer } from './components/ChatDrawer';
 import { QrCodeModal } from './components/QrCodeModal';
 import { EmergencyModal } from './components/EmergencyModal';
 import { MoreMenuSheet } from './components/MoreMenuSheet';
 import { ProfileModal } from './components/ProfileModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { HowToPlayModal } from './components/HowToPlayModal';
+import { RoleRevealOverlay } from './components/RoleRevealOverlay';
 
 export default function App() {
   const [profile, setProfile] = useState<CareerProfile>(() => loadCareerProfile());
@@ -83,7 +87,13 @@ export default function App() {
   // Hardware & UI toggles
   const [stealthHaptic, setStealthHaptic] = useState<boolean>(false);
   const [flashColor, setFlashColor] = useState<FlashColor | null>(null);
-  const [radioStatusText, setRadioStatusText] = useState<string | null>(null);
+  const [showChatDrawer, setShowChatDrawer] = useState(false);
+  const [activeRadioOpen, setActiveRadioOpen] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [pocketModeOpen, setPocketModeOpen] = useState(false);
+  const [soloSpeed, setSoloSpeed] = useState<1 | 5 | 20>(1);
+  const [roundNumber, setRoundNumber] = useState(1);
+  const [pendingRoleRevealKey, setPendingRoleRevealKey] = useState<string | null>(null);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -99,6 +109,10 @@ export default function App() {
   profileRef.current = profile;
   const stealthRef = useRef<boolean>(stealthHaptic);
   stealthRef.current = stealthHaptic;
+  const chatOpenRef = useRef<boolean>(showChatDrawer || activeRadioOpen);
+  chatOpenRef.current = showChatDrawer || activeRadioOpen;
+  const soloSpeedRef = useRef<1 | 5 | 20>(soloSpeed);
+  soloSpeedRef.current = soloSpeed;
   const lastUploadedGpsRef = useRef<GpsPoint | null>(null);
   const recordedRoundCodeRef = useRef<string | null>(null);
 
@@ -178,6 +192,15 @@ export default function App() {
         onRoomUpdate: (remoteRoom) => {
           setRoom((prev) => {
             if (prev && prev.updatedAt > remoteRoom.updatedAt) return prev;
+            if (
+              prev?.phase === 'lobby' &&
+              (remoteRoom.phase === 'head_start' || remoteRoom.phase === 'hunt')
+            ) {
+              const me = remoteRoom.players.find((p) => p.id === profileRef.current.playerId);
+              if (shouldShowRoleReveal(me)) {
+                setPendingRoleRevealKey(`${remoteRoom.code}_${remoteRoom.roundStartedAt ?? Date.now()}`);
+              }
+            }
             saveLocalRoomSnapshot(remoteRoom);
             return remoteRoom;
           });
@@ -247,18 +270,33 @@ export default function App() {
             };
           });
         },
-        onRadioPacket: (packet: RadioPacket) => {
+        onChatMessage: (message: ChatMessage) => {
           const current = roomRef.current;
           if (!current) return;
           const me = current.players.find((p) => p.id === profileRef.current.playerId);
-          // Strict team-only walkie-talkie isolation!
-          if (!me || me.role !== packet.team || packet.senderId === me.id) return;
-          fireAlert('radio_rx');
-          playRadioBase64(packet.audioBase64, packet.mimeType);
-          setRadioStatusText(
-            `${packet.senderName} (${packet.team === 'hunter' ? 'Hunters' : 'Runners'} Radio)`
-          );
-          window.setTimeout(() => setRadioStatusText(null), Math.max(2500, packet.durationSec * 1000 + 800));
+          setRoom((prev) => {
+            if (!prev) return prev;
+            const existing = prev.chatMessages ?? [];
+            if (existing.some((m) => m.id === message.id)) return prev;
+            const updated: RoomState = {
+              ...prev,
+              chatMessages: [...existing.slice(-99), message],
+            };
+            saveLocalRoomSnapshot(updated);
+            return updated;
+          });
+          // Notify only if visible to viewer and not sent by self
+          const isVisible =
+            message.scope === 'global' ||
+            current.phase === 'lobby' ||
+            current.phase === 'ended' ||
+            (me && message.team === me.role);
+          if (isVisible && message.senderId !== profileRef.current.playerId) {
+            fireAlert('radio_rx');
+            if (!chatOpenRef.current) {
+              setUnreadChatCount((c) => c + 1);
+            }
+          }
         },
         onMeetingVote: ({ voterId, targetId }) => {
           setRoom((prev) => {
@@ -371,56 +409,91 @@ export default function App() {
     };
   }, [isRoundActive]);
 
-  // Live GPS WatchPosition with smart 4s moving / 12s stationary cellular throttling
+  // Directly request location access upon launching the app, then keep live GPS tracking active
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const ts = Date.now();
-        const pt: GpsPoint = {
-          lat: roundCoord(pos.coords.latitude),
-          lng: roundCoord(pos.coords.longitude),
-          ts,
-        };
-        setUserPos({ lat: pt.lat, lng: pt.lng });
+    const applyGpsFix = (pos: GeolocationPosition) => {
+      const ts = Date.now();
+      const pt: GpsPoint = {
+        lat: roundCoord(pos.coords.latitude),
+        lng: roundCoord(pos.coords.longitude),
+        ts,
+      };
+      setUserPos({ lat: pt.lat, lng: pt.lng });
 
-        const cur = roomRef.current;
-        if (!cur) return;
+      const cur = roomRef.current;
+      if (!cur) return;
 
-        // Update local player GPS & local OOB check immediately
-        setRoom((prev) => {
-          if (!prev) return prev;
-          const myId = profileRef.current.playerId;
-          const players = prev.players.map((p) => {
-            if (p.id !== myId) return p;
-            const outside =
-              prev.phase === 'hunt' && p.role === 'runner' && !isPointInZone(pt, prev.currentZone);
-            const oobStartedAt = outside ? p.oobStartedAt ?? ts : null;
-            const oobEval = evaluateOobState(outside, oobStartedAt, ts);
-            const lastTrail = p.trail[p.trail.length - 1];
-            const append =
-              !lastTrail || haversineMeters(lastTrail, pt) >= 5 || ts - lastTrail.ts >= 10_000;
-            return {
-              ...p,
-              lastPos: pt,
-              trail: append ? [...p.trail.slice(-500), pt] : p.trail,
-              oobStartedAt,
-              oobStatus: oobEval.status,
-              lastSeenAt: ts,
-            };
-          });
-          return { ...prev, players };
+      // Update local player GPS & local OOB check immediately (and recenter fresh lobby zone if still on fallback)
+      setRoom((prev) => {
+        if (!prev) return prev;
+        const myId = profileRef.current.playerId;
+        const players = prev.players.map((p) => {
+          if (p.id !== myId) return p;
+          const outside =
+            prev.phase === 'hunt' && p.role === 'runner' && !isPointInZone(pt, prev.currentZone);
+          const oobStartedAt = outside ? p.oobStartedAt ?? ts : null;
+          const oobEval = evaluateOobState(outside, oobStartedAt, ts);
+          const lastTrail = p.trail[p.trail.length - 1];
+          const append =
+            !lastTrail || haversineMeters(lastTrail, pt) >= 5 || ts - lastTrail.ts >= 10_000;
+          return {
+            ...p,
+            lastPos: pt,
+            trail: append ? [...p.trail.slice(-500), pt] : p.trail,
+            oobStartedAt,
+            oobStatus: oobEval.status,
+            lastSeenAt: ts,
+          };
         });
 
-        // Smart cellular throttle for outgoing GPS broadcast
-        if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt)) {
-          lastUploadedGpsRef.current = pt;
-          void supabaseSync.sendGpsDelta(cur.code, profileRef.current.playerId, pt);
+        const isStillDefaultZone =
+          prev.phase === 'lobby' &&
+          prev.hostId === myId &&
+          Math.abs(prev.settings.zone.center.lat - DEFAULT_COORDS.lat) < 0.0002 &&
+          Math.abs(prev.settings.zone.center.lng - DEFAULT_COORDS.lng) < 0.0002;
+
+        if (isStillDefaultZone) {
+          const recenteredZone = {
+            ...prev.settings.zone,
+            center: { lat: pt.lat, lng: pt.lng },
+          };
+          return {
+            ...prev,
+            players,
+            settings: { ...prev.settings, zone: recenteredZone },
+            currentZone: recenteredZone,
+          };
         }
-      },
+
+        return { ...prev, players };
+      });
+
+      // Smart cellular throttle for outgoing GPS broadcast
+      if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt)) {
+        lastUploadedGpsRef.current = pt;
+        void supabaseSync.sendGpsDelta(cur.code, profileRef.current.playerId, pt);
+      }
+    };
+
+    // Prompt for location access immediately on app launch
+    navigator.geolocation.getCurrentPosition(
+      applyGpsFix,
       () => {
-        // GPS denied or unavailable in simulator/desktop — smoothly keep DEFAULT_COORDS fallback
+        // Permission denied or unavailable — keep fallback coordinates cleanly
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 12000,
+      }
+    );
+
+    const watchId = navigator.geolocation.watchPosition(
+      applyGpsFix,
+      () => {
+        // GPS denied or unavailable in simulator/desktop — smoothly keep fallback
       },
       {
         enableHighAccuracy: true,
@@ -456,6 +529,22 @@ export default function App() {
         }
       }
 
+      // 1b. Apply Solo Practice speed multiplier (5x / 20x) by accelerating scheduled timestamps
+      const speedMult = next.isSoloDemo ? soloSpeedRef.current : 1;
+      if (next.isSoloDemo && speedMult > 1 && (next.phase === 'head_start' || next.phase === 'hunt')) {
+        const extraShiftMs = (speedMult - 1) * 1000;
+        next = {
+          ...next,
+          headStartEndsAt: next.headStartEndsAt ? next.headStartEndsAt - extraShiftMs : null,
+          roundEndsAt: next.roundEndsAt ? next.roundEndsAt - extraShiftMs : null,
+          nextPingAt: next.nextPingAt ? next.nextPingAt - extraShiftMs : null,
+          nextZoneTransitionAt: next.nextZoneTransitionAt
+            ? next.nextZoneTransitionAt - extraShiftMs
+            : null,
+        };
+        changed = true;
+      }
+
       // 2. Head Start -> Hunt transition
       if (next.phase === 'head_start' && next.headStartEndsAt && now >= next.headStartEndsAt) {
         next = {
@@ -469,7 +558,7 @@ export default function App() {
 
       // 3. Step Solo AI Bots
       if (next.isSoloDemo && (next.phase === 'head_start' || next.phase === 'hunt')) {
-        next = stepSoloBots(next, 1, now);
+        next = stepSoloBots(next, speedMult, now);
         changed = true;
       }
 
@@ -653,6 +742,7 @@ export default function App() {
       players: [hostPlayer],
       pings: [],
       tags: [],
+      chatMessages: [],
       roundStartedAt: null,
       headStartEndsAt: null,
       roundEndsAt: null,
@@ -666,6 +756,9 @@ export default function App() {
     };
 
     recordedRoundCodeRef.current = null;
+    setRoundNumber(1);
+    setPendingRoleRevealKey(null);
+    setSoloSpeed(1);
     setNewlyUnlockedBadges([]);
     saveSessionRejoin({
       roomCode: code,
@@ -729,18 +822,27 @@ export default function App() {
     return null;
   };
 
-  const handleStartSoloDemo = (role: 'hunter' | 'runner', mode: GameMode) => {
+  const handleStartSoloDemo = (role: 'hunter' | 'runner' | 'random', mode: GameMode) => {
     unlockAudioSession();
+    const now = Date.now();
     const demo = createSoloDemoRoom(
       profile.playerId,
       profile.name.trim() || 'Field Agent',
       userPos,
       role,
       mode,
-      Date.now()
+      now
     );
     recordedRoundCodeRef.current = null;
+    setRoundNumber(1);
+    setSoloSpeed(1);
+    setPocketModeOpen(false);
     setNewlyUnlockedBadges([]);
+    if (role === 'random') {
+      setPendingRoleRevealKey(`${demo.code}_${now}`);
+    } else {
+      setPendingRoleRevealKey(null);
+    }
     saveSessionRejoin({
       roomCode: demo.code,
       playerId: profile.playerId,
@@ -821,6 +923,13 @@ export default function App() {
 
     recordedRoundCodeRef.current = null;
     setNewlyUnlockedBadges([]);
+    setPocketModeOpen(false);
+    const myAssigned = assigned.find((p) => p.id === profile.playerId);
+    if (shouldShowRoleReveal(myAssigned)) {
+      setPendingRoleRevealKey(`${started.code}_${now}`);
+    } else {
+      setPendingRoleRevealKey(null);
+    }
     fireAlert('head_start_end');
     commitRoom(started, true);
   };
@@ -844,38 +953,63 @@ export default function App() {
     commitRoom(updated, false);
   };
 
-  const handleSendRadioClip = (audioBase64: string, mimeType: string, durationSec: number) => {
+  const appendAndBroadcastChat = (message: ChatMessage) => {
+    if (!room) return;
+    const nextRoom: RoomState = {
+      ...room,
+      chatMessages: [...(room.chatMessages ?? []).slice(-99), message],
+      updatedAt: message.ts,
+    };
+    commitRoom(nextRoom, false);
+    if (!room.isSoloDemo) {
+      void supabaseSync.sendChatMessage(message);
+    }
+  };
+
+  const handleSendTextMessage = (scope: ChatScope, text: string) => {
     if (!room) return;
     const me = room.players.find((p) => p.id === profile.playerId);
-    if (!me || (me.role !== 'hunter' && me.role !== 'runner')) return;
-
-    const packet: RadioPacket = {
-      id: `rad_${Date.now()}`,
+    if (!me) return;
+    appendAndBroadcastChat({
+      id: `chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      scope,
+      team: me.role,
       senderId: me.id,
       senderName: me.name,
+      senderColor: me.color,
+      kind: 'text',
+      text,
+      ts: Date.now(),
+    });
+  };
+
+  const handleSendVoiceMessage = (
+    scope: ChatScope,
+    audioBase64: string,
+    mimeType: string,
+    durationSec: number
+  ) => {
+    if (!room) return;
+    const me = room.players.find((p) => p.id === profile.playerId);
+    if (!me) return;
+    appendAndBroadcastChat({
+      id: `voice_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      scope,
       team: me.role,
+      senderId: me.id,
+      senderName: me.name,
+      senderColor: me.color,
+      kind: 'voice',
       audioBase64,
       mimeType,
       durationSec,
       ts: Date.now(),
-    };
-    if (room.isSoloDemo) {
-      if (!stealthRef.current) {
-        playRadioBase64(audioBase64, mimeType);
-      }
-      setRadioStatusText(`Radio Check · Playing back (${durationSec.toFixed(1)}s)`);
-      window.setTimeout(
-        () => setRadioStatusText(null),
-        Math.max(2400, Math.round(durationSec * 1000) + 900)
-      );
-      return;
-    }
+    });
+  };
 
-    setRadioStatusText(
-      `Sent to ${me.role === 'hunter' ? 'Hunters' : 'Runners'} Radio (${durationSec.toFixed(1)}s)`
-    );
-    window.setTimeout(() => setRadioStatusText(null), 2200);
-    void supabaseSync.sendRadioPacket(packet);
+  const handleOpenChat = () => {
+    setShowChatDrawer(true);
+    setUnreadChatCount(0);
   };
 
   const handleTriggerRoomEmergency = (address: string) => {
@@ -999,15 +1133,27 @@ export default function App() {
     saveSessionRejoin(null);
     saveLocalRoomSnapshot(null);
     setRoom(null);
+    setShowChatDrawer(false);
+    setActiveRadioOpen(false);
+    setPocketModeOpen(false);
+    setPendingRoleRevealKey(null);
+    setSoloSpeed(1);
+    setUnreadChatCount(0);
     setShowQrModal(false);
     setShowMoreMenu(false);
   };
 
   const handlePlayAgain = () => {
     if (!room) return;
+    setRoundNumber((n) => n + 1);
     if (room.isSoloDemo) {
       const me = room.players.find((p) => p.id === profile.playerId);
-      const rolePref = me?.initialRole === 'runner' ? 'runner' : 'hunter';
+      const rolePref =
+        me?.preference === 'random'
+          ? 'random'
+          : me?.initialRole === 'runner'
+          ? 'runner'
+          : 'hunter';
       handleStartSoloDemo(rolePref, room.settings.mode);
       return;
     }
@@ -1121,9 +1267,68 @@ export default function App() {
     );
   };
 
+  const handleSoloSkipMinute = () => {
+    if (!room || !room.isSoloDemo) return;
+    const now = Date.now();
+    const shiftMs = 60_000;
+    const nextHeadStart = room.headStartEndsAt ? room.headStartEndsAt - shiftMs : null;
+    const nextPhase =
+      room.phase === 'head_start' && nextHeadStart !== null && now >= nextHeadStart
+        ? 'hunt'
+        : room.phase;
+    if (nextPhase !== room.phase) {
+      fireAlert('head_start_end');
+    }
+    const shifted: RoomState = {
+      ...room,
+      phase: nextPhase,
+      headStartEndsAt: nextHeadStart,
+      roundEndsAt: room.roundEndsAt ? room.roundEndsAt - shiftMs : null,
+      nextPingAt: room.nextPingAt ? room.nextPingAt - shiftMs : null,
+      nextZoneTransitionAt: room.nextZoneTransitionAt ? room.nextZoneTransitionAt - shiftMs : null,
+      updatedAt: now,
+    };
+    const stepped = stepSoloBots(shifted, 12, now);
+    commitRoom(stepped, false);
+  };
+
+  const handleRadioVisibilityChange = useCallback((isOpen: boolean) => {
+    setActiveRadioOpen(isOpen);
+    if (isOpen) {
+      setUnreadChatCount(0);
+    }
+  }, []);
+
   const inviteUrl = room
     ? `${window.location.origin}${window.location.pathname}?code=${room.code}`
     : '';
+
+  const viewerPlayer = room?.players.find((p) => p.id === profile.playerId);
+  const nearestRunnerBot =
+    room && room.isSoloDemo && (room.phase === 'hunt' || room.phase === 'head_start')
+      ? room.players
+          .filter((p) => p.isBot && p.role === 'runner' && !p.eliminated && p.lastPos)
+          .sort(
+            (a, b) =>
+              haversineMeters(userPos, a.lastPos!) - haversineMeters(userPos, b.lastPos!)
+          )[0]
+      : undefined;
+  const visibleChatMessages = room
+    ? filterVisibleChatMessages(room.chatMessages, viewerPlayer, room.phase)
+    : [];
+  const latestChatMsg =
+    visibleChatMessages.length > 0
+      ? visibleChatMessages[visibleChatMessages.length - 1]
+      : null;
+  const latestChatPreview = latestChatMsg
+    ? `${latestChatMsg.scope === 'global' ? '[Global]' : '[Team]'} ${
+        latestChatMsg.senderId === profile.playerId ? 'You' : latestChatMsg.senderName
+      }: ${
+        latestChatMsg.kind === 'voice'
+          ? `Voice message (${Math.max(1, Math.round(latestChatMsg.durationSec ?? 1))}s)`
+          : latestChatMsg.text ?? ''
+      }`
+    : null;
 
   return (
     <>
@@ -1148,6 +1353,7 @@ export default function App() {
           viewerId={profile.playerId}
           userPos={userPos}
           customPresets={customPresets}
+          unreadChatCount={unreadChatCount}
           onUpdateSettings={handleUpdateSettings}
           onUpdatePreference={handleUpdatePreference}
           onSaveCustomPreset={handleSaveCustomPreset}
@@ -1155,6 +1361,7 @@ export default function App() {
           onRemovePlayer={handleRemovePlayer}
           onStartRound={handleStartRound}
           onShowQr={() => setShowQrModal(true)}
+          onOpenChat={handleOpenChat}
           onOpenMoreMenu={() => setShowMoreMenu(true)}
         />
       )}
@@ -1173,21 +1380,33 @@ export default function App() {
             offlineQueueCount={offlineQueueCount}
             stealthHaptic={stealthHaptic}
             flashColor={flashColor}
-            radioStatusText={radioStatusText}
+            unreadChatCount={unreadChatCount}
+            latestChatMsg={latestChatMsg}
+            pocketModeOpen={pocketModeOpen}
+            onSetPocketMode={setPocketModeOpen}
+            onRadioVisibilityChange={handleRadioVisibilityChange}
             onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
-            onChangeMapTheme={handleChangeMapTheme}
+            onSendText={handleSendTextMessage}
+            onSendVoice={handleSendVoiceMessage}
             onOpenMoreMenu={() => setShowMoreMenu(true)}
             onRunnerGotTagged={handleRunnerGotTagged}
-            onTagBotInSolo={handleTagBotInSolo}
-            onSendRadioClip={handleSendRadioClip}
             onResolveEmergency={handleResolveEmergency}
             onCallImposterMeeting={handleCallImposterMeeting}
             onCastMeetingVote={handleCastMeetingVote}
             onResolveMeeting={handleResolveMeeting}
-            onSoloSkipHeadStart={handleSoloSkipHeadStart}
-            onSoloTriggerPing={handleSoloTriggerPing}
-            onSoloTriggerShrink={handleSoloTriggerShrink}
-            onSoloFinishRound={handleEndRoundNow}
+          />
+        )}
+
+      {/* Full-Screen Tap-to-Reveal Mystery & Role Reveal Overlay (when player picked Random) */}
+      {room &&
+        pendingRoleRevealKey &&
+        (room.phase === 'head_start' || room.phase === 'hunt') && (
+          <RoleRevealOverlay
+            room={room}
+            viewerId={profile.playerId}
+            roundNumber={roundNumber}
+            stealthHaptic={stealthHaptic}
+            onComplete={() => setPendingRoleRevealKey(null)}
           />
         )}
 
@@ -1200,6 +1419,21 @@ export default function App() {
           onPlayAgain={handlePlayAgain}
           onReturnHome={handleLeaveGame}
           onOpenMoreMenu={() => setShowMoreMenu(true)}
+        />
+      )}
+
+      {/* Lobby / Post-Round Radio Drawer (Active Game uses the integrated full-screen Radio tab) */}
+      {room && (room.phase === 'lobby' || room.phase === 'ended') && (
+        <ChatDrawer
+          isOpen={showChatDrawer}
+          onClose={() => setShowChatDrawer(false)}
+          messages={room.chatMessages ?? []}
+          viewer={viewerPlayer}
+          phase={room.phase}
+          isSoloDemo={room.isSoloDemo}
+          stealthHaptic={stealthHaptic}
+          onSendText={handleSendTextMessage}
+          onSendVoice={handleSendVoiceMessage}
         />
       )}
 
@@ -1224,18 +1458,36 @@ export default function App() {
       {showMoreMenu && room && (
         <MoreMenuSheet
           title={
-            room.phase === 'lobby'
-              ? 'Lobby Menu'
+            room.isSoloDemo
+              ? 'Demo controls'
+              : room.phase === 'lobby'
+              ? 'Lobby menu'
               : room.phase === 'ended'
-              ? 'Post-Round Menu'
-              : 'Field Menu'
+              ? 'Post-round menu'
+              : 'Field controls'
           }
+          subtitle={
+            room.isSoloDemo
+              ? 'A practice round. The other players are bots.'
+              : `Room ${room.code} · ${room.players.length} players`
+          }
+          isSoloDemo={room.isSoloDemo}
+          isActiveGame={room.phase === 'head_start' || room.phase === 'hunt'}
           isHost={room.hostId === profile.playerId}
           players={room.players}
           viewerId={profile.playerId}
           mapTheme={room.settings.mapTheme}
           stealthHaptic={stealthHaptic}
           canEndRound={room.phase === 'head_start' || room.phase === 'hunt'}
+          soloSpeed={soloSpeed}
+          nearestBotName={nearestRunnerBot?.name.replace(' (AI)', '')}
+          onChangeSoloSpeed={setSoloSpeed}
+          onSoloPingNow={handleSoloTriggerPing}
+          onSoloTagNearest={
+            nearestRunnerBot ? () => handleTagBotInSolo(nearestRunnerBot.id) : undefined
+          }
+          onSoloSkipMinute={handleSoloSkipMinute}
+          onEnablePocketMode={() => setPocketModeOpen(true)}
           onOpenGetHelp={() => setShowEmergencyModal(true)}
           onOpenHowToPlay={() => setShowHowToPlayModal(true)}
           onChangeMapTheme={handleChangeMapTheme}

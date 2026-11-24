@@ -8,6 +8,7 @@ import {
   Play,
   Plus,
   QrCode,
+  Radio,
   Save,
   Trash2,
   UserMinus,
@@ -24,7 +25,12 @@ import type {
   TeamPreference,
   UnitSystem,
 } from '../types/game';
-import { applyBuiltInPreset, BUILT_IN_PRESETS } from '../game/rules';
+import {
+  applyBuiltInPreset,
+  BUILT_IN_PRESETS,
+  getCallsignInitial,
+  type VisiblePlayerMarker,
+} from '../game/rules';
 import { createDefaultPolygonAround, formatZoneSize, roundCoord } from '../game/geo';
 import { TacticalMap } from './TacticalMap';
 
@@ -33,6 +39,7 @@ interface LobbyViewProps {
   viewerId: string;
   userPos: LatLng;
   customPresets: CustomPreset[];
+  unreadChatCount?: number;
   onUpdateSettings: (settings: RoomSettings) => void;
   onUpdatePreference: (pref: TeamPreference) => void;
   onSaveCustomPreset: (name: string) => void;
@@ -40,6 +47,7 @@ interface LobbyViewProps {
   onRemovePlayer: (playerId: string) => void;
   onStartRound: () => void;
   onShowQr: () => void;
+  onOpenChat: () => void;
   onOpenMoreMenu: () => void;
 }
 
@@ -62,6 +70,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   viewerId,
   userPos,
   customPresets,
+  unreadChatCount = 0,
   onUpdateSettings,
   onUpdatePreference,
   onSaveCustomPreset,
@@ -69,6 +78,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   onRemovePlayer,
   onStartRound,
   onShowQr,
+  onOpenChat,
   onOpenMoreMenu,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -80,6 +90,19 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const viewer = room.players.find((p) => p.id === viewerId);
   const isHost = room.hostId === viewerId;
   const s = room.settings;
+
+  // Show ALL players in the lobby right on the live map with their callsign first letter
+  const lobbyPlayerMarkers: VisiblePlayerMarker[] = room.players.map((p) => ({
+    player: p,
+    position: p.lastPos ?? {
+      lat: s.zone.center.lat,
+      lng: s.zone.center.lng,
+      ts: p.lastSeenAt,
+    },
+    isExposedOob: false,
+    isEmergencyPin: false,
+    isDelayed: false,
+  }));
 
   const inviteUrl =
     typeof window !== 'undefined'
@@ -177,6 +200,21 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             >
               <QrCode className="w-4 h-4 text-emerald-400" />
               <span className="hidden sm:inline">QR Code</span>
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              type="button"
+              onClick={onOpenChat}
+              aria-label="Open Lobby Radio"
+              className="relative min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              <Radio className="w-4 h-4 text-[#FF5733]" />
+              <span className="hidden sm:inline">Radio</span>
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#EA3419] text-white text-[10px] font-extrabold flex items-center justify-center tabular-nums">
+                  {unreadChatCount}
+                </span>
+              )}
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.94 }}
@@ -340,13 +378,15 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Squad Roster */}
-                  <div>
+                  {/* Squad Roster — shows ALL players inside the lobby */}
+                  <div data-testid="lobby-players-list">
                     <div className="flex items-center justify-between mb-2.5">
                       <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Players ({room.players.length})
+                        Players in Lobby ({room.players.length})
                       </h2>
-                      <span className="text-[11px] text-slate-500">Auto-balanced on start</span>
+                      <span className="text-[11px] text-emerald-400 font-medium">
+                        {room.players.filter((p) => p.connected).length} online
+                      </span>
                     </div>
                     <div className="divide-y divide-white/[0.06] rounded-2xl bg-[#090A10] border border-white/[0.07] overflow-hidden">
                       {room.players.map((p) => (
@@ -356,21 +396,37 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
                             <span
-                              className="w-2.5 h-2.5 rounded-full shrink-0"
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold text-[#08090E] shrink-0"
                               style={{ backgroundColor: p.color }}
-                            />
-                            <span className="text-sm font-semibold text-white truncate">
-                              {p.name}
-                              {p.id === viewerId ? ' (You)' : ''}
+                            >
+                              {getCallsignInitial(p.name)}
                             </span>
-                            {p.isHost && (
-                              <span className="text-[11px] font-semibold text-cyan-400 shrink-0">
-                                Host
-                              </span>
-                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-sm font-semibold text-white truncate">
+                                  {p.name}
+                                  {p.id === viewerId ? ' (You)' : ''}
+                                </span>
+                                {p.isHost && (
+                                  <span className="text-[11px] font-semibold text-cyan-400 shrink-0">
+                                    Host
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    p.connected ? 'bg-emerald-400' : 'bg-slate-500'
+                                  }`}
+                                />
+                                <span>{p.connected ? 'Ready in lobby' : 'Reconnecting'}</span>
+                              </div>
+                            </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs text-slate-400 capitalize">{p.preference}</span>
+                            <span className="text-xs font-medium text-slate-300 capitalize">
+                              {p.preference}
+                            </span>
                             {isHost && p.id !== viewerId && (
                               <button
                                 type="button"
@@ -776,11 +832,37 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             </div>
           </div>
 
+          {/* Live Lobby Players Bar above map so everyone in the lobby is always visible */}
+          <div className="relative z-10 px-4 py-2 bg-[#0B0D14] border-b border-white/[0.07] flex items-center gap-2 overflow-x-auto">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+              In Lobby ({room.players.length})
+            </span>
+            <div className="flex items-center gap-1.5">
+              {room.players.map((p) => (
+                <span
+                  key={p.id}
+                  className="inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-[#151824] border border-white/[0.08] text-xs font-semibold text-white whitespace-nowrap"
+                >
+                  <span
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-extrabold text-[#08090E]"
+                    style={{ backgroundColor: p.color }}
+                  >
+                    {getCallsignInitial(p.name)}
+                  </span>
+                  <span>{p.name}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
           <div className="flex-1 relative min-h-[360px] overflow-hidden">
             <TacticalMap
               center={s.zone.center || userPos}
               mapTheme={s.mapTheme}
               activeZone={s.zone}
+              visibleMarkers={lobbyPlayerMarkers}
+              viewerId={viewerId}
+              centerLabel={viewer?.name || 'Host'}
               editableZone={isHost}
               onZoneChange={(nextZone) => patchSettings({ zone: nextZone })}
               className="absolute inset-0 w-full h-full"

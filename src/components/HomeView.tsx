@@ -23,7 +23,7 @@ interface HomeViewProps {
   onUpdateName: (name: string) => void;
   onHostGame: (mode: GameMode) => void;
   onJoinGame: (code: string) => Promise<string | null>;
-  onStartSoloDemo: (role: 'hunter' | 'runner', mode: GameMode) => void;
+  onStartSoloDemo: (role: 'hunter' | 'runner' | 'random', mode: GameMode) => void;
   onOpenProfile: () => void;
   onOpenChangelog: () => void;
   onOpenHowToPlay: () => void;
@@ -100,7 +100,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [callsign, setCallsign] = useState(profile.name || '');
   const [joinCode, setJoinCode] = useState(initialRoomCode.toUpperCase());
   const [selectedMode, setSelectedMode] = useState<GameMode>('classic');
-  const [demoRole, setDemoRole] = useState<'hunter' | 'runner'>('hunter');
+  const [demoRole, setDemoRole] = useState<'hunter' | 'runner' | 'random'>('random');
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
@@ -134,13 +134,19 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   return (
     <div className="relative min-h-dvh bg-[#08090E] text-[#F4F5F9] flex flex-col overflow-x-clip">
-      {/* Subtle Ambient Tactical Radar Backdrop */}
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden z-0">
-        <div className="absolute -top-48 right-[-120px] sm:right-[-60px] w-[460px] h-[460px] sm:w-[620px] sm:h-[620px] rounded-full border border-emerald-500/[0.08] flex items-center justify-center">
-          <div className="w-[72%] h-[72%] rounded-full border border-emerald-500/[0.07] flex items-center justify-center">
-            <div className="w-[54%] h-[54%] rounded-full border border-emerald-500/[0.07]" />
+      {/* Static Ambient Tactical Radar Backdrop (anchored in place, does not follow scroll) */}
+      <div
+        aria-hidden="true"
+        data-testid="home-radar-backdrop"
+        className="pointer-events-none absolute inset-0 overflow-hidden z-0"
+      >
+        <div className="absolute top-44 sm:top-28 right-[-80px] sm:right-[3%] w-[440px] h-[440px] sm:w-[620px] sm:h-[620px] rounded-full border border-emerald-500/[0.22] flex items-center justify-center">
+          <div className="w-[72%] h-[72%] rounded-full border border-emerald-500/[0.18] flex items-center justify-center">
+            <div className="w-[46%] h-[46%] rounded-full border border-emerald-500/[0.2] flex items-center justify-center">
+              <div className="w-3 h-3 rounded-full bg-emerald-400/45 shadow-[0_0_16px_rgba(16,185,129,0.5)]" />
+            </div>
           </div>
-          <div className="fk-radar-sweep absolute inset-0 rounded-full opacity-55" />
+          <div className="fk-radar-sweep absolute inset-0 rounded-full opacity-95" />
         </div>
         <div
           className="absolute inset-0 opacity-[0.035]"
@@ -401,9 +407,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         <button
                           type="button"
                           onClick={() => setDemoRole('hunter')}
-                          className={`min-h-[38px] px-3 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                          className={`min-h-[38px] px-2.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                             demoRole === 'hunter'
-                              ? 'bg-red-500 text-white'
+                              ? 'bg-[#E62E14] text-white'
                               : 'text-slate-400 hover:text-white'
                           }`}
                         >
@@ -412,13 +418,24 @@ export const HomeView: React.FC<HomeViewProps> = ({
                         <button
                           type="button"
                           onClick={() => setDemoRole('runner')}
-                          className={`min-h-[38px] px-3 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                          className={`min-h-[38px] px-2.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                             demoRole === 'runner'
                               ? 'bg-emerald-500 text-[#08090E]'
                               : 'text-slate-400 hover:text-white'
                           }`}
                         >
                           Runner
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDemoRole('random')}
+                          className={`min-h-[38px] px-2.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
+                            demoRole === 'random'
+                              ? 'bg-white text-[#141413]'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          Random
                         </button>
                       </div>
                     </div>

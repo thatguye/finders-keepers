@@ -41,6 +41,14 @@
   padding-right: max(env(safe-area-inset-right, 0px), 16px);
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Map Theme Surface Backdrops & Tile Enhancements */
 .leaflet-container {
   background: #0b0d14;

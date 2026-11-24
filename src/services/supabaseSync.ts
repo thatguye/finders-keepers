@@ -1,5 +1,5 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
-import type { EmergencyAlert, GpsPoint, RadioPacket, RoomState, TagEvent } from '../types/game';
+import type { ChatMessage, EmergencyAlert, GpsPoint, RoomState, TagEvent } from '../types/game';
 import { roundCoord } from '../game/geo';
 
 const FALLBACK_SUPABASE_URL = 'https://bjnhbwqssckkdouohswe.supabase.co';
@@ -48,7 +48,7 @@ export interface RoomBroadcastHandlers {
     ts: number;
   }) => void;
   onEmergencySignal: (alert: EmergencyAlert | null) => void;
-  onRadioPacket: (packet: RadioPacket) => void;
+  onChatMessage: (message: ChatMessage) => void;
   onMeetingVote: (vote: { voterId: string; targetId: string }) => void;
   onQueueCountChange?: (count: number) => void;
 }
@@ -238,9 +238,9 @@ class SupabaseSyncService {
       .on('broadcast', { event: 'emergency' }, ({ payload }) => {
         this.handlers?.onEmergencySignal(payload?.alert ?? null);
       })
-      .on('broadcast', { event: 'radio' }, ({ payload }) => {
-        if (payload && payload.audioBase64) {
-          this.handlers?.onRadioPacket(payload as RadioPacket);
+      .on('broadcast', { event: 'chat_message' }, ({ payload }) => {
+        if (payload && payload.id && payload.kind) {
+          this.handlers?.onChatMessage(payload as ChatMessage);
         }
       })
       .on('broadcast', { event: 'meeting_vote' }, ({ payload }) => {
@@ -354,16 +354,16 @@ class SupabaseSyncService {
     }
   }
 
-  public async sendRadioPacket(packet: RadioPacket): Promise<void> {
+  public async sendChatMessage(message: ChatMessage): Promise<void> {
     if (!this.channel || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
     try {
       await this.channel.send({
         type: 'broadcast',
-        event: 'radio',
-        payload: packet,
+        event: 'chat_message',
+        payload: message,
       });
     } catch {
-      // radio clips are ephemeral; drop quietly if dead zone
+      // chat broadcast best-effort during dead zone
     }
   }
 

@@ -7,8 +7,8 @@ import type {
   PlayerState,
   RadarPing,
 } from '../types/game';
-import type { VisiblePlayerMarker } from '../game/rules';
-import { roundCoord } from '../game/geo';
+import { getCallsignInitial, type VisiblePlayerMarker } from '../game/rules';
+import { haversineMeters, roundCoord } from '../game/geo';
 
 interface TacticalMapProps {
   center: LatLng;
@@ -19,6 +19,8 @@ interface TacticalMapProps {
   pings?: RadarPing[];
   showTrailsForPlayers?: PlayerState[];
   viewerId?: string;
+  /** Uppercase initial shown on the editable zone center pin (defaults to viewer callsign first letter) */
+  centerLabel?: string;
   nowMs?: number;
   /** Lobby zone editing mode */
   editableZone?: boolean;
@@ -78,6 +80,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
   pings = [],
   showTrailsForPlayers = [],
   viewerId,
+  centerLabel,
   nowMs = Date.now(),
   editableZone = false,
   onZoneChange,
@@ -197,13 +200,18 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
       }).addTo(group);
 
       if (editableZone) {
+        const pinLetter = escapeHtml(getCallsignInitial(centerLabel));
+        const pinCaption = centerLabel ? `${escapeHtml(centerLabel)} · ZONE` : 'ZONE';
         const pin = L.marker([activeZone.center.lat, activeZone.center.lng], {
           draggable: true,
+          zIndexOffset: 600,
           icon: L.divIcon({
             className: 'fk-center-pin',
-            html: `<div style="width:32px;height:32px;border-radius:9999px;background:#10B981;border:3px solid #09090E;box-shadow:0 4px 14px rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;color:#09090E;font-weight:800;font-size:12px;">C</div>`,
-            iconSize: [32, 32],
-            iconAnchor: [16, 16],
+            html: `<div style="position:relative;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:grab;">
+              <div data-testid="zone-center-pin" style="width:34px;height:34px;border-radius:9999px;background:#10B981;border:3px solid #FFFFFF;box-shadow:0 4px 16px rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;color:#08090E;font-weight:900;font-size:13px;">${pinLetter}</div>
+              <div style="margin-top:4px;padding:2px 7px;border-radius:7px;background:rgba(9,10,16,0.92);border:1px solid #10B981;color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.45);">${pinCaption}</div>
+            </div>`,
+            iconSize: [0, 0],
           }),
         }).addTo(group);
 
@@ -276,7 +284,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         ).addTo(group);
       }
     }
-  }, [activeZone, nextZonePreview, editableZone, mapTheme]);
+  }, [activeZone, nextZonePreview, editableZone, mapTheme, centerLabel]);
 
   // Render players, animated radar pings, and post-round trails
   useEffect(() => {
@@ -335,6 +343,15 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
     for (const item of visibleMarkers) {
       const { player, position, isExposedOob, isEmergencyPin, isDelayed } = item;
       const isSelf = player.id === viewerId;
+      // Avoid visually double-stacking the viewer dot directly underneath the draggable Lobby zone center pin
+      if (
+        editableZone &&
+        activeZone.shape === 'circle' &&
+        isSelf &&
+        haversineMeters(position, activeZone.center) < 15
+      ) {
+        continue;
+      }
       const badgeColor = isEmergencyPin
         ? '#DC2626'
         : isExposedOob
@@ -352,6 +369,9 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         ? '1m DELAY'
         : player.role.toUpperCase();
 
+      const initialLetter = escapeHtml(getCallsignInitial(player.name));
+      const dotSize = isSelf ? 28 : 24;
+
       L.marker([position.lat, position.lng], {
         zIndexOffset: isEmergencyPin ? 1000 : isSelf ? 500 : 100,
         icon: L.divIcon({
@@ -359,12 +379,12 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
           html: `<div style="position:relative;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;pointer-events:none;">
             ${
               isSelf || isEmergencyPin || isExposedOob
-                ? `<div class="fk-player-pulse" style="background:${badgeColor};"></div>`
+                ? `<div class="fk-player-pulse" style="background:${badgeColor};top:${dotSize / 2}px;"></div>`
                 : ''
             }
-            <div style="position:relative;z-index:2;width:${isSelf ? 20 : 16}px;height:${
-            isSelf ? 20 : 16
-          }px;border-radius:9999px;background:${badgeColor};border:3px solid #FFFFFF;box-shadow:0 3px 12px rgba(0,0,0,0.65);"></div>
+            <div data-testid="player-initial-icon" style="position:relative;z-index:2;width:${dotSize}px;height:${dotSize}px;border-radius:9999px;background:${badgeColor};border:2.5px solid #FFFFFF;box-shadow:0 3px 12px rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;color:#FFFFFF;font-weight:800;font-size:${
+              isSelf ? 12 : 11
+            }px;line-height:1;">${initialLetter}</div>
             <div style="margin-top:4px;padding:2px 7px;border-radius:7px;background:rgba(9,10,16,0.92);border:1px solid ${badgeColor};color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.45);">${escapeHtml(
               player.name
             )} <span style="color:${badgeColor};margin-left:3px;">${subLabel}</span></div>
@@ -373,7 +393,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
         }),
       }).addTo(group);
     }
-  }, [visibleMarkers, pings, showTrailsForPlayers, viewerId, nowMs]);
+  }, [visibleMarkers, pings, showTrailsForPlayers, viewerId, nowMs, editableZone, activeZone]);
 
   const themeClass = `fk-map-${mapTheme}`;
 

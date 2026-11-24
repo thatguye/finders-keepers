@@ -462,7 +462,15 @@ export async function startRadioRecording(
   }
 }
 
-export function playRadioBase64(base64: string, mimeType: string): void {
+export interface VoicePlaybackHandle {
+  stop: () => void;
+}
+
+export function playVoiceClip(
+  base64: string,
+  mimeType: string,
+  onEnded?: () => void
+): VoicePlaybackHandle | null {
   try {
     unlockAudioSession();
     const binary = atob(base64);
@@ -473,12 +481,71 @@ export function playRadioBase64(base64: string, mimeType: string): void {
     const blob = new Blob([bytes], { type: mimeType || 'audio/webm' });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    audio.onerror = () => URL.revokeObjectURL(url);
-    void audio.play().catch(() => {
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
       URL.revokeObjectURL(url);
-    });
+      onEnded?.();
+    };
+    audio.onended = cleanup;
+    audio.onerror = cleanup;
+    void audio.play().catch(cleanup);
+    return {
+      stop: () => {
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+        } catch {
+          // ignore
+        }
+        cleanup();
+      },
+    };
   } catch {
-    // ignore playback rejection
+    onEnded?.();
+    return null;
   }
+}
+
+/**
+ * Generates a compact valid WAV tone clip (base64) for Solo Demo voice message testing
+ * on devices without a physical microphone.
+ */
+export function createDemoVoiceWavBase64(durationSec = 1.2): { base64: string; mimeType: string } {
+  const sampleRate = 8000;
+  const clampedSec = Math.min(4, Math.max(0.6, durationSec));
+  const numSamples = Math.floor(sampleRate * clampedSec);
+  const buffer = new ArrayBuffer(44 + numSamples * 2);
+  const view = new DataView(buffer);
+
+  const writeStr = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, numSamples * 2, true);
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const env = Math.min(1, t * 14) * Math.min(1, (clampedSec - t) * 14);
+    const freq = t < clampedSec * 0.45 ? 587.33 : 880;
+    const sample = Math.sin(2 * Math.PI * freq * t) * 0.22 * env;
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 32767, true);
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return { base64: btoa(binary), mimeType: 'audio/wav' };
 }

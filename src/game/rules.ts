@@ -2,6 +2,7 @@ import type {
   BadgeDefinition,
   BadgeId,
   CareerProfile,
+  ChatMessage,
   GameMode,
   GpsPoint,
   LatLng,
@@ -9,6 +10,7 @@ import type {
   PlayerState,
   RoomSettings,
   RoomState,
+  RoundPhase,
   ScoreBreakdown,
   TagEvent,
   TeamRole,
@@ -655,3 +657,69 @@ export function evaluateUnlockedBadges(
 
   return Array.from(unlocked);
 }
+
+/**
+ * Extracts the uppercase first letter of a player's callsign for map markers and avatars.
+ */
+export function getCallsignInitial(name?: string | null): string {
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return 'A';
+  const match = trimmed.match(/[A-Za-z0-9]/);
+  return (match ? match[0] : trimmed[0]).toUpperCase();
+}
+
+/**
+ * Enforces team-only isolation for Team chat during active rounds while allowing Global chat for everyone.
+ */
+export function filterVisibleChatMessages(
+  messages: ChatMessage[] | undefined,
+  viewer: PlayerState | undefined,
+  phase: RoundPhase
+): ChatMessage[] {
+  if (!messages || messages.length === 0) return [];
+  return messages.filter((msg) => {
+    if (msg.scope === 'global') return true;
+    if (phase === 'lobby' || phase === 'ended') return true;
+    if (!viewer) return false;
+    return msg.team === viewer.role;
+  });
+}
+
+/**
+ * Returns true when the player chose Random team preference and should get the tap-to-reveal role screen.
+ */
+export function shouldShowRoleReveal(viewer: PlayerState | undefined): boolean {
+  return viewer?.preference === 'random';
+}
+
+/**
+ * Stamps changelog releases with real local timestamps (persisted per version, never fake hardcoded months).
+ */
+export function resolveReleaseTimestamps(
+  releases: { version: string; offsetMinutesAgo: number }[],
+  nowMs: number,
+  stored: Record<string, number> = {}
+): Record<string, number> {
+  const result: Record<string, number> = { ...stored };
+  for (const rel of releases) {
+    if (typeof result[rel.version] !== 'number' || !Number.isFinite(result[rel.version])) {
+      result[rel.version] = nowMs - rel.offsetMinutesAgo * 60_000;
+    }
+  }
+  return result;
+}
+
+export function formatRealDateTime(ts: number): string {
+  const d = new Date(ts);
+  const datePart = d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timePart = d.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${datePart} · ${timePart}`;
+}
+

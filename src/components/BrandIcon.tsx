@@ -3,51 +3,73 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Download, Share, X } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
-export const BrandIcon: React.FC<{ className?: string }> = ({ className = 'w-10 h-10' }) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 512 512"
-    className={`${className} border border-white/15`}
-    role="img"
-    aria-label="Finders Keepers icon"
-  >
-    <rect width="512" height="512" rx="112" fill="#000000" />
-
-    {/* Front Runner (Left, sprinting left) */}
-    <g
-      transform="translate(34 148) scale(2.22)"
-      fill="none"
-      stroke="#FFFFFF"
-      strokeWidth="5.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+export const BrandIcon: React.FC<{ className?: string }> = ({ className = 'w-10 h-10' }) => {
+  const uid = React.useId().replace(/:/g, '');
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 512 512"
+      className={`${className} border border-white/15 overflow-hidden`}
+      role="img"
+      aria-label="Finders Keepers icon"
     >
-      <circle cx="28" cy="14" r="9.5" />
-      <path d="M34 23 L43 36 L48 47" />
-      <path d="M34 23 L20 37 L9 21" />
-      <path d="M34 23 L51 24 L67 33" />
-      <path d="M48 47 L22 86 L18 82.5" />
-      <path d="M48 47 L65 62 L83 48 L84.5 52.5" />
-    </g>
+      <defs>
+        <radialGradient id={`${uid}-bg`} cx="50%" cy="44%" r="74%">
+          <stop offset="0%" stopColor="#1E1D1C" />
+          <stop offset="56%" stopColor="#0D0D0F" />
+          <stop offset="100%" stopColor="#030304" />
+        </radialGradient>
+        <radialGradient id={`${uid}-glow`} cx="64%" cy="44%" r="50%">
+          <stop offset="0%" stopColor="#EA3419" stopOpacity="0.34" />
+          <stop offset="50%" stopColor="#EA3419" stopOpacity="0.10" />
+          <stop offset="100%" stopColor="#EA3419" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id={`${uid}-sweep`} x1="88%" y1="10%" x2="26%" y2="80%">
+          <stop offset="0%" stopColor="#FF5436" stopOpacity="0.46" />
+          <stop offset="52%" stopColor="#EA3419" stopOpacity="0.14" />
+          <stop offset="100%" stopColor="#EA3419" stopOpacity="0" />
+        </linearGradient>
+      </defs>
 
-    {/* Chasing Runner (Right, sprinting left, separated) */}
-    <g
-      transform="translate(264 148) scale(2.22)"
-      fill="none"
-      stroke="#FFFFFF"
-      strokeWidth="5.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="28" cy="14" r="9.5" />
-      <path d="M34 23 L43 36 L48 47" />
-      <path d="M34 23 L20 37 L9 21" />
-      <path d="M34 23 L51 24 L67 33" />
-      <path d="M48 47 L22 86 L18 82.5" />
-      <path d="M48 47 L65 62 L83 48 L84.5 52.5" />
-    </g>
-  </svg>
-);
+      <rect width="512" height="512" fill={`url(#${uid}-bg)`} />
+      <rect width="512" height="512" fill={`url(#${uid}-glow)`} />
+
+      <g fill="none" strokeLinecap="round">
+        <circle cx="256" cy="256" r="212" stroke="#FFFFFF" strokeOpacity="0.12" strokeWidth="3" />
+        <circle cx="256" cy="256" r="154" stroke="#FFFFFF" strokeOpacity="0.12" strokeWidth="3" strokeDasharray="8 12" />
+        <circle cx="256" cy="256" r="94" stroke="#EA3419" strokeOpacity="0.30" strokeWidth="3" />
+        <path d="M 256 256 L 372 80 A 212 212 0 0 1 464 294 Z" fill={`url(#${uid}-sweep)`} />
+      </g>
+
+      <g
+        transform="translate(256 256) scale(0.94) translate(-266 -253)"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeWidth="17"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* Escaping Runner (Front / Left, sprinting left) */}
+        <circle cx="132" cy="176" r="26" />
+        <path d="M 148 206 Q 162 238 176 270" />
+        <path d="M 148 206 L 114 238 L 86 202" />
+        <path d="M 148 206 L 188 214 L 218 236" />
+        <path d="M 176 270 L 134 312 L 102 360 L 86 350" />
+        <path d="M 176 270 L 210 314 L 244 286 L 250 299" />
+
+        {/* Pursuing Chaser (Back / Right, sprinting left, separated) */}
+        <circle cx="326" cy="174" r="26" />
+        <path d="M 342 204 Q 358 238 374 268" />
+        <path d="M 342 204 L 304 228 L 274 200" />
+        <path d="M 342 204 L 382 214 L 414 236" />
+        <path d="M 374 268 L 328 308 L 298 358 L 282 349" />
+        <path d="M 374 268 L 408 312 L 442 284 L 448 297" />
+      </g>
+
+      <circle cx="362" cy="96" r="12" fill="#EA3419" />
+    </svg>
+  );
+};
 
 export const PWAInstallButton: React.FC<{ className?: string }> = ({ className = '' }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
