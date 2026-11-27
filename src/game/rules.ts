@@ -139,13 +139,14 @@ export function createDefaultSettings(center: LatLng = DEFAULT_COORDS): RoomSett
       shape: 'circle',
       center,
       diameterMeters: 3219, // 2.0 mi
-      polygon: createDefaultPolygonAround(center, 650),
+      polygon: createDefaultPolygonAround(center, 650, 5),
     },
     zoneShrinkEnabled: true,
     finalZoneDiameterMeters: 483, // 0.3 mi
     spectatorAccess: 'live',
     units: 'mi',
     mapTheme: 'night',
+    huntersCanTalk: true,
   };
 }
 
@@ -175,6 +176,50 @@ export function generateRoomCode(rng: () => number = Math.random): string {
     out += CODE_ALPHABET[Math.floor(rng() * CODE_ALPHABET.length)];
   }
   return out;
+}
+
+/** Sanitizes a host-entered custom room code to up to 6 uppercase alphanumeric chars */
+export function formatRoomCodeInput(raw: string): string {
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+}
+
+/** Formats raw GPS horizontal accuracy meters into readable US feet or meters */
+export function formatAccuracyLabel(accuracyMeters: number | null | undefined, units: 'mi' | 'km' = 'mi'): string {
+  if (typeof accuracyMeters !== 'number' || !Number.isFinite(accuracyMeters) || accuracyMeters <= 0) {
+    return 'GPS signal locked';
+  }
+  if (units === 'mi') {
+    const feet = Math.max(5, Math.round((accuracyMeters * 3.28084) / 5) * 5);
+    return `Accurate to about ${feet.toLocaleString('en-US')} ft`;
+  }
+  const m = Math.max(2, Math.round(accuracyMeters));
+  return `Accurate to about ${m} m`;
+}
+
+export const PLAYER_LOOK_COLORS = [
+  { id: 'emerald', label: 'Signal Emerald', hex: '#10B981' },
+  { id: 'cyan', label: 'Radar Cyan', hex: '#06B6D4' },
+  { id: 'amber', label: 'Curfew Amber', hex: '#F59E0B' },
+  { id: 'crimson', label: 'Hunter Red', hex: '#EF4444' },
+  { id: 'violet', label: 'Night Violet', hex: '#8B5CF6' },
+  { id: 'white', label: 'Ghost White', hex: '#F8FAFC' },
+] as const;
+
+export const PLAYER_TITLES = [
+  'Field Agent',
+  'Ghost Runner',
+  'Night Scout',
+  'Apex Seeker',
+  'Zone Sprinter',
+  'Shadow Ops',
+] as const;
+
+export function cycleTeamPreference(
+  current: 'hunter' | 'runner' | 'random'
+): 'hunter' | 'runner' | 'random' {
+  if (current === 'hunter') return 'runner';
+  if (current === 'runner') return 'random';
+  return 'hunter';
 }
 
 /**
@@ -735,3 +780,20 @@ export function formatRealDateTime(ts: number): string {
   return `${datePart} · ${timePart}`;
 }
 
+/**
+ * Determines whether the animated launch splash screen should display and for how long.
+ * Respects `?autostart=1` for instant entry and shortens duration for reduced-motion users.
+ */
+export function shouldShowSplashOnLaunch(
+  search: string,
+  reducedMotion: boolean
+): { show: boolean; durationMs: number } {
+  const params = new URLSearchParams(search || '');
+  if (params.get('autostart') === '1') {
+    return { show: false, durationMs: 0 };
+  }
+  return {
+    show: true,
+    durationMs: reducedMotion ? 800 : 2250,
+  };
+}

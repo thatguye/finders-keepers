@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import type {
   BadgeId,
   CareerProfile,
@@ -28,16 +29,19 @@ import {
   canAccessGameWithLocation,
   checkWinCondition,
   createDefaultSettings,
+  cycleTeamPreference,
   evaluateOobState,
   filterVisibleChatMessages,
+  formatRoomCodeInput,
   generateRoomCode,
   type LocationAccessStatus,
   PLAYER_COLORS,
   processTag,
   shouldShowRoleReveal,
+  shouldShowSplashOnLaunch,
   shouldThrottleGpsUpload,
 } from './game/rules';
-import { createSoloDemoRoom, stepSoloBots } from './game/bots';
+import { createSoloDemoLobby, createSoloDemoRoom, stepSoloBots } from './game/bots';
 import {
   deleteCustomPreset,
   loadCareerProfile,
@@ -71,14 +75,25 @@ import { ChangelogModal } from './components/ChangelogModal';
 import { HowToPlayModal } from './components/HowToPlayModal';
 import { RoleRevealOverlay } from './components/RoleRevealOverlay';
 import { LocationGateOverlay } from './components/LocationGateOverlay';
+import { SplashScreen } from './components/SplashScreen';
 
 export default function App() {
   const [profile, setProfile] = useState<CareerProfile>(() => loadCareerProfile());
   const [customPresets, setCustomPresets] = useState<CustomPreset[]>(() => loadCustomPresets());
   const [room, setRoom] = useState<RoomState | null>(null);
   const [userPos, setUserPos] = useState<LatLng | null>(null);
+  const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationAccessStatus>('checking');
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [splashConfig] = useState(() => {
+    const search = typeof window !== 'undefined' ? window.location.search : '';
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    return shouldShowSplashOnLaunch(search, reduced);
+  });
+  const [showSplash, setShowSplash] = useState<boolean>(() => splashConfig.show);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const [isOnline, setIsOnline] = useState<boolean>(() =>
@@ -142,7 +157,9 @@ export default function App() {
 
   // Sync body dataset state for testability and PWA clarity
   useEffect(() => {
-    const state = !hasLocationAccess
+    const state = showSplash
+      ? 'splash'
+      : !hasLocationAccess
       ? 'location_required'
       : !room
       ? 'title'
@@ -154,7 +171,7 @@ export default function App() {
       ? 'gameover'
       : 'playing';
     document.body.dataset.state = state;
-  }, [room, hasLocationAccess]);
+  }, [room, hasLocationAccess, showSplash]);
 
   // Unlock iOS AudioSession on first interaction
   useEffect(() => {
@@ -359,6 +376,9 @@ export default function App() {
         ts,
       };
       setUserPos({ lat: pt.lat, lng: pt.lng });
+      if (typeof pos.coords.accuracy === 'number' && Number.isFinite(pos.coords.accuracy)) {
+        setGpsAccuracyMeters(pos.coords.accuracy);
+      }
       setLocationStatus('granted');
       setLocationError(null);
 
@@ -780,10 +800,20 @@ export default function App() {
   }, [room]);
 
   // Actions
-  const handleUpdateName = (name: string) => {
-    const updated = { ...profile, name };
+  const handleUpdateProfile = (patch: Partial<CareerProfile>) => {
+    const updated: CareerProfile = { ...profile, ...patch };
     setProfile(updated);
     saveCareerProfile(updated);
+  };
+
+  const personalMapTheme: MapTheme = profile.preferredMapTheme ?? room?.settings.mapTheme ?? 'night';
+
+  const handleChangePersonalMapTheme = (theme: MapTheme) => {
+    handleUpdateProfile({ preferredMapTheme: theme });
+    if (room) {
+      const nextSettings = { ...room.settings, mapTheme: theme };
+      commitRoom({ ...room, settings: nextSettings, updatedAt: Date.now() }, false);
+    }
   };
 
   const handleHostGame = (mode: GameMode) => {
@@ -796,6 +826,7 @@ export default function App() {
     const code = generateRoomCode();
     const settings = createDefaultSettings(userPos);
     settings.mode = mode;
+    settings.mapTheme = personalMapTheme;
 
     const hostPlayer: PlayerState = {
       id: profile.playerId,
@@ -805,7 +836,7 @@ export default function App() {
       role: 'runner',
       eliminated: false,
       tagsCount: 0,
-      color: PLAYER_COLORS[0],
+      color: profile.looks?.dotColor || PLAYER_COLORS[0],
       lastPos: { lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: now },
       trail: [{ lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: now }],
       oobStartedAt: null,
@@ -879,7 +910,7 @@ export default function App() {
       role: fetched.phase === 'lobby' ? 'runner' : 'spectator',
       eliminated: fetched.phase !== 'lobby',
       tagsCount: 0,
-      color: PLAYER_COLORS[fetched.players.length % PLAYER_COLORS.length],
+      color: profile.looks?.dotColor || PLAYER_COLORS[fetched.players.length % PLAYER_COLORS.length],
       lastPos: myPos,
       trail: [myPos],
       oobStartedAt: null,
@@ -919,38 +950,70 @@ export default function App() {
     return null;
   };
 
-  const handleStartSoloDemo = (role: 'hunter' | 'runner' | 'random', mode: GameMode) => {
+  const handleOpenDemoLobby = () => {
     if (!userPos) {
       requestLocationAccess();
       return;
     }
     unlockAudioSession();
     const now = Date.now();
-    const demo = createSoloDemoRoom(
+    const demoLobby = createSoloDemoLobby(
       profile.playerId,
       profile.name.trim() || 'Field Agent',
       userPos,
-      role,
-      mode,
+      profile.looks?.dotColor || PLAYER_COLORS[0],
+      personalMapTheme,
       now
     );
     recordedRoundCodeRef.current = null;
     setRoundNumber(1);
     setSoloSpeed(1);
     setPocketModeOpen(false);
+    setPendingRoleRevealKey(null);
     setNewlyUnlockedBadges([]);
-    if (role === 'random') {
-      setPendingRoleRevealKey(`${demo.code}_${now}`);
-    } else {
-      setPendingRoleRevealKey(null);
-    }
     saveSessionRejoin({
-      roomCode: demo.code,
+      roomCode: demoLobby.code,
       playerId: profile.playerId,
       playerName: profile.name.trim() || 'Field Agent',
       isSoloDemo: true,
     });
-    commitRoom(demo, false);
+    commitRoom(demoLobby, false);
+  };
+
+  const handleChangeRoomCode = (rawCode: string) => {
+    if (!room || room.hostId !== profile.playerId) return;
+    const cleaned = formatRoomCodeInput(rawCode);
+    if (cleaned.length !== 6 || cleaned === room.code) return;
+    const updated: RoomState = {
+      ...room,
+      code: cleaned,
+      updatedAt: Date.now(),
+    };
+    saveSessionRejoin({
+      roomCode: cleaned,
+      playerId: profile.playerId,
+      playerName: profile.name.trim() || 'Host Agent',
+      isSoloDemo: room.isSoloDemo,
+    });
+    if (!room.isSoloDemo) {
+      supabaseSync.unsubscribe();
+      connectRoomChannel(cleaned);
+    }
+    commitRoom(updated, !room.isSoloDemo);
+  };
+
+  const handleCycleBotPreference = (botId: string) => {
+    if (!room || !room.isSoloDemo) return;
+    commitRoom(
+      {
+        ...room,
+        players: room.players.map((p) =>
+          p.id === botId && p.isBot ? { ...p, preference: cycleTeamPreference(p.preference) } : p
+        ),
+        updatedAt: Date.now(),
+      },
+      false
+    );
   };
 
   const handleUpdateSettings = (settings: RoomSettings) => {
@@ -1223,17 +1286,6 @@ export default function App() {
   const handlePlayAgain = () => {
     if (!room) return;
     setRoundNumber((n) => n + 1);
-    if (room.isSoloDemo) {
-      const me = room.players.find((p) => p.id === profile.playerId);
-      const rolePref =
-        me?.preference === 'random'
-          ? 'random'
-          : me?.initialRole === 'runner'
-          ? 'runner'
-          : 'hunter';
-      handleStartSoloDemo(rolePref, room.settings.mode);
-      return;
-    }
     const resetLobby: RoomState = {
       ...room,
       phase: 'lobby',
@@ -1262,13 +1314,7 @@ export default function App() {
       updatedAt: Date.now(),
     };
     recordedRoundCodeRef.current = null;
-    commitRoom(resetLobby, true);
-  };
-
-  const handleChangeMapTheme = (theme: MapTheme) => {
-    if (!room) return;
-    const nextSettings = { ...room.settings, mapTheme: theme };
-    commitRoom({ ...room, settings: nextSettings, updatedAt: Date.now() }, room.hostId === profile.playerId);
+    commitRoom(resetLobby, !room.isSoloDemo);
   };
 
   const handleSaveCustomPreset = (name: string) => {
@@ -1398,196 +1444,216 @@ export default function App() {
       ? visibleChatMessages[visibleChatMessages.length - 1]
       : null;
 
-  if (!hasLocationAccess || !userPos) {
-    return (
-      <LocationGateOverlay
-        status={locationStatus}
-        errorMessage={locationError}
-        onRequestLocation={requestLocationAccess}
-      />
-    );
-  }
-
   return (
     <>
-      {!room && (
-        <HomeView
-          profile={profile}
-          initialRoomCode={initialInviteCode}
-          onUpdateName={handleUpdateName}
-          onHostGame={handleHostGame}
-          onJoinGame={handleJoinGame}
-          onStartSoloDemo={handleStartSoloDemo}
-          onOpenProfile={() => setShowProfileModal(true)}
-          onOpenChangelog={() => setShowChangelogModal(true)}
-          onOpenHowToPlay={() => setShowHowToPlayModal(true)}
-          onOpenGetHelp={() => setShowEmergencyModal(true)}
+      {!hasLocationAccess || !userPos ? (
+        <LocationGateOverlay
+          status={locationStatus}
+          errorMessage={locationError}
+          onRequestLocation={requestLocationAccess}
         />
+      ) : (
+        <>
+          {!room && (
+            <HomeView
+              profile={profile}
+              initialRoomCode={initialInviteCode}
+              onUpdateProfile={handleUpdateProfile}
+              onHostGame={handleHostGame}
+              onJoinGame={handleJoinGame}
+              onOpenDemoLobby={handleOpenDemoLobby}
+              onOpenChangelog={() => setShowChangelogModal(true)}
+              onOpenHowToPlay={() => setShowHowToPlayModal(true)}
+              onOpenGetHelp={() => setShowEmergencyModal(true)}
+            />
+          )}
+
+          {room && room.phase === 'lobby' && (
+            <LobbyView
+              room={room}
+              viewerId={profile.playerId}
+              userPos={userPos}
+              personalMapTheme={personalMapTheme}
+              customPresets={customPresets}
+              unreadChatCount={unreadChatCount}
+              onUpdateSettings={handleUpdateSettings}
+              onChangePersonalMapTheme={handleChangePersonalMapTheme}
+              onChangeRoomCode={handleChangeRoomCode}
+              onUpdatePreference={handleUpdatePreference}
+              onCycleBotPreference={room.isSoloDemo ? handleCycleBotPreference : undefined}
+              onSaveCustomPreset={handleSaveCustomPreset}
+              onDeleteCustomPreset={handleDeleteCustomPreset}
+              onRemovePlayer={handleRemovePlayer}
+              onStartRound={handleStartRound}
+              onLeaveLobby={handleLeaveGame}
+              onShowQr={() => setShowQrModal(true)}
+              onOpenChat={handleOpenChat}
+              onOpenHowToPlay={() => setShowHowToPlayModal(true)}
+              onOpenGetHelp={() => setShowEmergencyModal(true)}
+              onOpenMoreMenu={() => setShowMoreMenu(true)}
+            />
+          )}
+
+          {room &&
+            (room.phase === 'head_start' ||
+              room.phase === 'hunt' ||
+              room.phase === 'emergency_pause' ||
+              room.phase === 'meeting') && (
+              <ActiveGameView
+                room={room}
+                viewerId={profile.playerId}
+                userPos={userPos}
+                personalMapTheme={personalMapTheme}
+                nowMs={nowMs}
+                isOnline={isOnline}
+                offlineQueueCount={offlineQueueCount}
+                stealthHaptic={stealthHaptic}
+                flashColor={flashColor}
+                unreadChatCount={unreadChatCount}
+                latestChatMsg={latestChatMsg}
+                pocketModeOpen={pocketModeOpen}
+                onSetPocketMode={setPocketModeOpen}
+                onRadioVisibilityChange={handleRadioVisibilityChange}
+                onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
+                onSendText={handleSendTextMessage}
+                onOpenMoreMenu={() => setShowMoreMenu(true)}
+                onRunnerGotTagged={handleRunnerGotTagged}
+                onResolveEmergency={handleResolveEmergency}
+                onCallImposterMeeting={handleCallImposterMeeting}
+                onCastMeetingVote={handleCastMeetingVote}
+                onResolveMeeting={handleResolveMeeting}
+              />
+            )}
+
+          {/* Full-Screen Tap-to-Reveal Mystery & Role Reveal Overlay (when player picked Random) */}
+          {room &&
+            pendingRoleRevealKey &&
+            (room.phase === 'head_start' || room.phase === 'hunt') && (
+              <RoleRevealOverlay
+                room={room}
+                viewerId={profile.playerId}
+                roundNumber={roundNumber}
+                stealthHaptic={stealthHaptic}
+                onComplete={() => setPendingRoleRevealKey(null)}
+              />
+            )}
+
+          {room && room.phase === 'ended' && (
+            <PostRoundView
+              room={room}
+              scores={scores}
+              personalMapTheme={personalMapTheme}
+              newlyUnlockedBadges={newlyUnlockedBadges}
+              allProfileBadges={profile.badges}
+              onPlayAgain={handlePlayAgain}
+              onReturnHome={handleLeaveGame}
+              onOpenMoreMenu={() => setShowMoreMenu(true)}
+            />
+          )}
+
+          {/* Lobby / Post-Round Radio Drawer (Active Game uses the integrated full-screen Radio tab) */}
+          {room && (room.phase === 'lobby' || room.phase === 'ended') && (
+            <ChatDrawer
+              isOpen={showChatDrawer}
+              onClose={() => setShowChatDrawer(false)}
+              messages={room.chatMessages ?? []}
+              viewer={viewerPlayer}
+              phase={room.phase}
+              onSendText={handleSendTextMessage}
+            />
+          )}
+
+          {/* Modals & Action Sheets */}
+          {showQrModal && room && (
+            <QrCodeModal
+              roomCode={room.code}
+              inviteUrl={inviteUrl}
+              onClose={() => setShowQrModal(false)}
+            />
+          )}
+
+          {showEmergencyModal && (
+            <EmergencyModal
+              position={userPos}
+              accuracyMeters={gpsAccuracyMeters}
+              units={room?.settings.units ?? 'mi'}
+              inActiveRoom={!!room && room.phase !== 'ended'}
+              onTriggerRoomEmergency={handleTriggerRoomEmergency}
+              onClose={() => setShowEmergencyModal(false)}
+            />
+          )}
+
+          {showMoreMenu && room && (
+            <MoreMenuSheet
+              title={
+                room.isSoloDemo
+                  ? 'Demo controls'
+                  : room.phase === 'lobby'
+                  ? 'Lobby menu'
+                  : room.phase === 'ended'
+                  ? 'Post-round menu'
+                  : 'Field controls'
+              }
+              subtitle={
+                room.isSoloDemo
+                  ? 'A practice round. The other players are bots.'
+                  : `Room ${room.code} · ${room.players.length} players`
+              }
+              isSoloDemo={room.isSoloDemo}
+              isActiveGame={room.phase === 'head_start' || room.phase === 'hunt'}
+              isHost={room.hostId === profile.playerId}
+              players={room.players}
+              viewerId={profile.playerId}
+              mapTheme={personalMapTheme}
+              stealthHaptic={stealthHaptic}
+              canEndRound={room.phase === 'head_start' || room.phase === 'hunt'}
+              soloSpeed={soloSpeed}
+              nearestBotName={nearestRunnerBot?.name.replace(' (AI)', '')}
+              onChangeSoloSpeed={setSoloSpeed}
+              onSoloPingNow={handleSoloTriggerPing}
+              onSoloTagNearest={
+                nearestRunnerBot ? () => handleTagBotInSolo(nearestRunnerBot.id) : undefined
+              }
+              onSoloSkipMinute={handleSoloSkipMinute}
+              onEnablePocketMode={() => setPocketModeOpen(true)}
+              onOpenGetHelp={() => setShowEmergencyModal(true)}
+              onOpenHowToPlay={() => setShowHowToPlayModal(true)}
+              onChangeMapTheme={handleChangePersonalMapTheme}
+              onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
+              onRemovePlayer={handleRemovePlayer}
+              onEndRound={handleEndRoundNow}
+              onLeaveGame={handleLeaveGame}
+              onClose={() => setShowMoreMenu(false)}
+            />
+          )}
+
+          {showProfileModal && (
+            <ProfileModal
+              profile={profile}
+              units={room?.settings.units ?? 'mi'}
+              onClose={() => setShowProfileModal(false)}
+            />
+          )}
+
+          {showChangelogModal && (
+            <ChangelogModal onClose={() => setShowChangelogModal(false)} />
+          )}
+
+          {showHowToPlayModal && (
+            <HowToPlayModal onClose={() => setShowHowToPlayModal(false)} />
+          )}
+        </>
       )}
 
-      {room && room.phase === 'lobby' && (
-        <LobbyView
-          room={room}
-          viewerId={profile.playerId}
-          userPos={userPos}
-          customPresets={customPresets}
-          unreadChatCount={unreadChatCount}
-          onUpdateSettings={handleUpdateSettings}
-          onUpdatePreference={handleUpdatePreference}
-          onSaveCustomPreset={handleSaveCustomPreset}
-          onDeleteCustomPreset={handleDeleteCustomPreset}
-          onRemovePlayer={handleRemovePlayer}
-          onStartRound={handleStartRound}
-          onShowQr={() => setShowQrModal(true)}
-          onOpenChat={handleOpenChat}
-          onOpenMoreMenu={() => setShowMoreMenu(true)}
-        />
-      )}
-
-      {room &&
-        (room.phase === 'head_start' ||
-          room.phase === 'hunt' ||
-          room.phase === 'emergency_pause' ||
-          room.phase === 'meeting') && (
-          <ActiveGameView
-            room={room}
-            viewerId={profile.playerId}
-            userPos={userPos}
-            nowMs={nowMs}
-            isOnline={isOnline}
-            offlineQueueCount={offlineQueueCount}
-            stealthHaptic={stealthHaptic}
-            flashColor={flashColor}
-            unreadChatCount={unreadChatCount}
-            latestChatMsg={latestChatMsg}
-            pocketModeOpen={pocketModeOpen}
-            onSetPocketMode={setPocketModeOpen}
-            onRadioVisibilityChange={handleRadioVisibilityChange}
-            onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
-            onSendText={handleSendTextMessage}
-            onOpenMoreMenu={() => setShowMoreMenu(true)}
-            onRunnerGotTagged={handleRunnerGotTagged}
-            onResolveEmergency={handleResolveEmergency}
-            onCallImposterMeeting={handleCallImposterMeeting}
-            onCastMeetingVote={handleCastMeetingVote}
-            onResolveMeeting={handleResolveMeeting}
+      <AnimatePresence>
+        {showSplash && (
+          <SplashScreen
+            key="launch-splash"
+            durationMs={splashConfig.durationMs}
+            onComplete={() => setShowSplash(false)}
           />
         )}
-
-      {/* Full-Screen Tap-to-Reveal Mystery & Role Reveal Overlay (when player picked Random) */}
-      {room &&
-        pendingRoleRevealKey &&
-        (room.phase === 'head_start' || room.phase === 'hunt') && (
-          <RoleRevealOverlay
-            room={room}
-            viewerId={profile.playerId}
-            roundNumber={roundNumber}
-            stealthHaptic={stealthHaptic}
-            onComplete={() => setPendingRoleRevealKey(null)}
-          />
-        )}
-
-      {room && room.phase === 'ended' && (
-        <PostRoundView
-          room={room}
-          scores={scores}
-          newlyUnlockedBadges={newlyUnlockedBadges}
-          allProfileBadges={profile.badges}
-          onPlayAgain={handlePlayAgain}
-          onReturnHome={handleLeaveGame}
-          onOpenMoreMenu={() => setShowMoreMenu(true)}
-        />
-      )}
-
-      {/* Lobby / Post-Round Radio Drawer (Active Game uses the integrated full-screen Radio tab) */}
-      {room && (room.phase === 'lobby' || room.phase === 'ended') && (
-        <ChatDrawer
-          isOpen={showChatDrawer}
-          onClose={() => setShowChatDrawer(false)}
-          messages={room.chatMessages ?? []}
-          viewer={viewerPlayer}
-          phase={room.phase}
-          onSendText={handleSendTextMessage}
-        />
-      )}
-
-      {/* Modals & Action Sheets */}
-      {showQrModal && room && (
-        <QrCodeModal
-          roomCode={room.code}
-          inviteUrl={inviteUrl}
-          onClose={() => setShowQrModal(false)}
-        />
-      )}
-
-      {showEmergencyModal && (
-        <EmergencyModal
-          position={userPos}
-          inActiveRoom={!!room && room.phase !== 'ended'}
-          onTriggerRoomEmergency={handleTriggerRoomEmergency}
-          onClose={() => setShowEmergencyModal(false)}
-        />
-      )}
-
-      {showMoreMenu && room && (
-        <MoreMenuSheet
-          title={
-            room.isSoloDemo
-              ? 'Demo controls'
-              : room.phase === 'lobby'
-              ? 'Lobby menu'
-              : room.phase === 'ended'
-              ? 'Post-round menu'
-              : 'Field controls'
-          }
-          subtitle={
-            room.isSoloDemo
-              ? 'A practice round. The other players are bots.'
-              : `Room ${room.code} · ${room.players.length} players`
-          }
-          isSoloDemo={room.isSoloDemo}
-          isActiveGame={room.phase === 'head_start' || room.phase === 'hunt'}
-          isHost={room.hostId === profile.playerId}
-          players={room.players}
-          viewerId={profile.playerId}
-          mapTheme={room.settings.mapTheme}
-          stealthHaptic={stealthHaptic}
-          canEndRound={room.phase === 'head_start' || room.phase === 'hunt'}
-          soloSpeed={soloSpeed}
-          nearestBotName={nearestRunnerBot?.name.replace(' (AI)', '')}
-          onChangeSoloSpeed={setSoloSpeed}
-          onSoloPingNow={handleSoloTriggerPing}
-          onSoloTagNearest={
-            nearestRunnerBot ? () => handleTagBotInSolo(nearestRunnerBot.id) : undefined
-          }
-          onSoloSkipMinute={handleSoloSkipMinute}
-          onEnablePocketMode={() => setPocketModeOpen(true)}
-          onOpenGetHelp={() => setShowEmergencyModal(true)}
-          onOpenHowToPlay={() => setShowHowToPlayModal(true)}
-          onChangeMapTheme={handleChangeMapTheme}
-          onToggleStealthHaptic={() => setStealthHaptic((v) => !v)}
-          onRemovePlayer={handleRemovePlayer}
-          onEndRound={handleEndRoundNow}
-          onLeaveGame={handleLeaveGame}
-          onClose={() => setShowMoreMenu(false)}
-        />
-      )}
-
-      {showProfileModal && (
-        <ProfileModal
-          profile={profile}
-          units={room?.settings.units ?? 'mi'}
-          onClose={() => setShowProfileModal(false)}
-        />
-      )}
-
-      {showChangelogModal && (
-        <ChangelogModal onClose={() => setShowChangelogModal(false)} />
-      )}
-
-      {showHowToPlayModal && (
-        <HowToPlayModal onClose={() => setShowHowToPlayModal(false)} />
-      )}
+      </AnimatePresence>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import type { LatLng, PlayerState, RoomState } from '../types/game';
 import {
   computeNextZone,
+  createDefaultPolygonAround,
   haversineMeters,
   isPointInZone,
   movePointByBearing,
@@ -146,6 +147,112 @@ export function createSoloDemoRoom(
     roundEndsAt: nowMs + headStartMs + roundDurationMs,
     lastPingAt: null,
     nextPingAt: pingMs ? nowMs + headStartMs + 20_000 : null,
+    pausedAt: null,
+    emergency: null,
+    meeting: null,
+    winner: null,
+    updatedAt: nowMs,
+  };
+}
+
+/**
+ * Creates an interactive Solo Demo Lobby pre-filled with 5 AI bots so players can
+ * explore custom room codes, mode carousel, map themes, Play Zone Circle/Draw editing,
+ * and tap-to-cycle bot role picks before pressing Start Game.
+ */
+export function createSoloDemoLobby(
+  userId: string,
+  userName: string,
+  userPos: LatLng = DEFAULT_COORDS,
+  userColor: string = PLAYER_COLORS[0],
+  preferredMapTheme: RoomState['settings']['mapTheme'] = 'night',
+  nowMs: number = Date.now()
+): RoomState {
+  const settings = createDefaultSettings(userPos);
+  settings.mode = 'classic';
+  settings.roundLengthMin = 15;
+  settings.pingIntervalMin = 1;
+  settings.headStartMin = 1;
+  settings.zone.diameterMeters = 805; // 0.5 mi
+  settings.zone.polygon = createDefaultPolygonAround(userPos, 400, 6);
+  settings.finalZoneDiameterMeters = 244; // 800 ft
+  settings.zoneShrinkEnabled = true;
+  settings.mapTheme = preferredMapTheme;
+  settings.huntersCanTalk = true;
+
+  const userPlayer: PlayerState = {
+    id: userId,
+    name: userName.trim() || 'Field Agent',
+    isHost: true,
+    isBot: false,
+    preference: 'random',
+    role: 'runner',
+    eliminated: false,
+    tagsCount: 0,
+    color: userColor || PLAYER_COLORS[0],
+    lastPos: { lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: nowMs },
+    trail: [{ lat: roundCoord(userPos.lat), lng: roundCoord(userPos.lng), ts: nowMs }],
+    oobStartedAt: null,
+    oobStatus: 'inside',
+    connected: true,
+    lastSeenAt: nowMs,
+  };
+
+  const botPrefs: ('hunter' | 'runner' | 'random')[] = ['hunter', 'runner', 'runner', 'random', 'random'];
+  const bots: PlayerState[] = botPrefs.map((pref, idx) => {
+    const bearing = (idx * 360) / botPrefs.length + 25;
+    const dist = 160 + idx * 38;
+    const pos = movePointByBearing(userPos, dist, bearing);
+    return {
+      id: `bot_${idx + 1}`,
+      name: `${BOT_NAMES[idx]} (AI)`,
+      isHost: false,
+      isBot: true,
+      preference: pref,
+      role: pref === 'hunter' ? 'hunter' : 'runner',
+      eliminated: false,
+      tagsCount: 0,
+      color: PLAYER_COLORS[(idx + 1) % PLAYER_COLORS.length],
+      lastPos: { lat: pos.lat, lng: pos.lng, ts: nowMs },
+      trail: [{ lat: pos.lat, lng: pos.lng, ts: nowMs }],
+      oobStartedAt: null,
+      oobStatus: 'inside',
+      connected: true,
+      lastSeenAt: nowMs,
+    };
+  });
+
+  return {
+    code: generateRoomCode(),
+    isSoloDemo: true,
+    hostId: userId,
+    phase: 'lobby',
+    settings,
+    currentZone: settings.zone,
+    nextZonePreview: null,
+    nextZoneTransitionAt: null,
+    shrinkStep: 0,
+    players: [userPlayer, ...bots],
+    pings: [],
+    tags: [],
+    chatMessages: [
+      {
+        id: `msg_lobby_${nowMs}`,
+        scope: 'global',
+        team: 'runner',
+        senderId: 'bot_1',
+        senderName: 'Viper (AI)',
+        senderColor: PLAYER_COLORS[1],
+        kind: 'text',
+        text: 'Demo squad ready! Customize the zone or tap Start Game whenever you want.',
+        ts: nowMs,
+      },
+    ],
+    roundStartedAt: null,
+    headStartEndsAt: null,
+    roundEndsAt: null,
+    lastPingAt: null,
+    nextPingAt: null,
     pausedAt: null,
     emergency: null,
     meeting: null,

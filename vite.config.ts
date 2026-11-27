@@ -66,6 +66,20 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {
+              urlPattern: /^https:\/\/tiles\.openfreemap\.org\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'openfreemap-vector-cache',
+                expiration: {
+                  maxEntries: 600,
+                  maxAgeSeconds: 60 * 60 * 24 * 14,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
               urlPattern: /^https:\/\/server\.arcgisonline\.com\/.*/i,
               handler: 'CacheFirst',
               options: {
@@ -133,6 +147,9 @@ export default defineConfig(() => {
         },
       },
     ],
+    optimizeDeps: {
+      exclude: ['maplibre-gl'],
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

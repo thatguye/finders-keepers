@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "leaflet/dist/leaflet.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
 
 @theme {
   --font-display: "Barlow Condensed", system-ui, sans-serif;
@@ -49,51 +49,41 @@
   display: none;
 }
 
-/* Map Theme Surface Backdrops & Tile Enhancements */
-.leaflet-container {
+/* MapLibre GL JS Surface Backdrops & Crisp Controls */
+.maplibregl-map {
   background: #0b0d14;
   font-family: var(--font-sans);
-  transition: background-color 220ms ease;
 }
 
-.fk-map-night .leaflet-container {
-  background: #14171f;
+.fk-map-night .maplibregl-map {
+  background: #0b0e17;
 }
 
-.fk-map-night .leaflet-tile-pane {
-  filter: brightness(92%) contrast(108%);
+.fk-map-standard .maplibregl-map {
+  background: #e5e9f0;
 }
 
-.fk-map-standard .leaflet-container {
-  background: #e9edf2;
+.fk-map-satellite .maplibregl-map {
+  background: #091118;
 }
 
-.fk-map-satellite .leaflet-container {
-  background: #0c141a;
-}
-
-.fk-map-satellite .leaflet-tile-pane {
-  filter: contrast(106%) saturate(108%);
-}
-
-.fk-map-snow .leaflet-container {
+.fk-map-snow .maplibregl-map {
   background: #f1f5f9;
 }
 
-.fk-map-snow .leaflet-tile-pane {
-  filter: brightness(105%) contrast(108%) saturate(35%);
-}
-
-.leaflet-control-attribution {
-  background: rgba(9, 9, 14, 0.72) !important;
+.maplibregl-ctrl-attrib {
+  background: rgba(8, 9, 14, 0.65) !important;
   color: rgba(161, 165, 184, 0.78) !important;
   font-size: 9px !important;
-  padding: 1px 6px !important;
   border-top-left-radius: 6px;
 }
 
-.leaflet-control-attribution a {
-  color: rgba(203, 213, 225, 0.9) !important;
+.maplibregl-ctrl-attrib a {
+  color: rgba(203, 213, 225, 0.88) !important;
+}
+
+.maplibregl-ctrl-attrib-button {
+  filter: invert(0.85);
 }
 
 /* Custom Range Slider */

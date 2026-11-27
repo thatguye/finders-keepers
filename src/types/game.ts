@@ -54,6 +54,8 @@ export interface RoomSettings {
   units: UnitSystem;
   /** Map visual theme */
   mapTheme: MapTheme;
+  /** Whether Hunters can communicate on team radio */
+  huntersCanTalk?: boolean;
 }
 
 export interface PlayerState {
@@ -202,15 +204,29 @@ export interface LeaderboardEntry {
   distanceMeters: number;
 }
 
+export interface PlayerLooks {
+  dotColor: string;
+  trailStyle: 'solid' | 'dashed' | 'glow';
+  nameColor: string;
+  title: string;
+}
+
 export interface CareerProfile {
   playerId: string;
   name: string;
+  username?: string;
   roundsPlayed: number;
   wins: number;
   tags: number;
   cleanSweeps: number;
+  neverCaughtCount?: number;
+  bestEscapeMinutes?: number;
+  longestRoundMeters?: number;
   totalDistanceMeters: number;
   totalPoints: number;
+  leaderboardOptIn?: boolean;
+  preferredMapTheme?: MapTheme;
+  looks?: PlayerLooks;
   badges: BadgeId[];
   leaderboard: LeaderboardEntry[];
 }

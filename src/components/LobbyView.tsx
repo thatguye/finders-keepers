@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
+  Map as MapIcon,
   Minus,
   MoreHorizontal,
   Play,
@@ -10,13 +14,13 @@ import {
   QrCode,
   Radio,
   Save,
+  ShieldAlert,
   Trash2,
   UserMinus,
 } from 'lucide-react';
 import type {
   ActiveZone,
   CustomPreset,
-  GameMode,
   LatLng,
   MapTheme,
   RoomSettings,
@@ -28,81 +32,99 @@ import type {
 import {
   applyBuiltInPreset,
   BUILT_IN_PRESETS,
+  formatRoomCodeInput,
   getCallsignInitial,
   type VisiblePlayerMarker,
 } from '../game/rules';
-import { createDefaultPolygonAround, formatZoneSize, roundCoord } from '../game/geo';
+import { formatZoneSize } from '../game/geo';
 import { TacticalMap } from './TacticalMap';
+import { GAME_MODES, ModePickerSheet } from './ModePickerSheet';
+import { MAP_THEME_OPTIONS, MapPickerSheet } from './MapPickerSheet';
+import { PlayZoneEditorSheet } from './PlayZoneEditorSheet';
 
 interface LobbyViewProps {
   room: RoomState;
   viewerId: string;
   userPos: LatLng;
+  personalMapTheme: MapTheme;
   customPresets: CustomPreset[];
   unreadChatCount?: number;
   onUpdateSettings: (settings: RoomSettings) => void;
+  onChangePersonalMapTheme: (theme: MapTheme) => void;
+  onChangeRoomCode: (newCode: string) => void;
   onUpdatePreference: (pref: TeamPreference) => void;
+  onCycleBotPreference?: (botId: string) => void;
   onSaveCustomPreset: (name: string) => void;
   onDeleteCustomPreset: (id: string) => void;
   onRemovePlayer: (playerId: string) => void;
   onStartRound: () => void;
+  onLeaveLobby: () => void;
   onShowQr: () => void;
   onOpenChat: () => void;
+  onOpenHowToPlay: () => void;
+  onOpenGetHelp: () => void;
   onOpenMoreMenu: () => void;
 }
 
-const MODES: { id: GameMode; label: string; desc: string }[] = [
-  { id: 'classic', label: 'Classic', desc: 'Elimination + Spectators' },
-  { id: 'infection', label: 'Infection', desc: 'Tagged join Hunters' },
-  { id: 'curfew', label: 'Curfew', desc: 'Teleporting sub-zones' },
-  { id: 'imposter', label: 'Imposter', desc: 'Hidden roles + votes' },
-];
-
-const MAP_THEMES: { id: MapTheme; label: string }[] = [
-  { id: 'night', label: 'Night' },
-  { id: 'standard', label: 'Street' },
-  { id: 'satellite', label: 'Satellite' },
-  { id: 'snow', label: 'Snow' },
-];
+const ROUND_STEPS = [10, 15, 20, 30, 45, 60, 90, 120, 180];
+const HEAD_START_STEPS = [0, 1, 2, 3, 5, 10, 15, 20, 30];
+const PING_STEPS = [0, 1, 2, 3, 5, 10, 15, 20, 30];
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   room,
   viewerId,
   userPos,
+  personalMapTheme,
   customPresets,
   unreadChatCount = 0,
   onUpdateSettings,
+  onChangePersonalMapTheme,
+  onChangeRoomCode,
   onUpdatePreference,
+  onCycleBotPreference,
   onSaveCustomPreset,
   onDeleteCustomPreset,
   onRemovePlayer,
   onStartRound,
+  onLeaveLobby,
   onShowQr,
   onOpenChat,
+  onOpenHowToPlay,
+  onOpenGetHelp,
   onOpenMoreMenu,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [editingCode, setEditingCode] = useState(false);
+  const [codeDraft, setCodeDraft] = useState(room.code);
+  const [showModeSheet, setShowModeSheet] = useState(false);
+  const [showMapSheet, setShowMapSheet] = useState(false);
+  const [showZoneEditor, setShowZoneEditor] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [presetName, setPresetName] = useState('');
-  const [showPresetForm, setShowPresetForm] = useState(false);
-  const [panelTab, setPanelTab] = useState<'squad' | 'rules'>('squad');
-  const [mobileView, setMobileView] = useState<'squad' | 'rules' | 'map'>('squad');
 
   const viewer = room.players.find((p) => p.id === viewerId);
   const isHost = room.hostId === viewerId;
   const s = room.settings;
 
-  // Show ALL players in the lobby right on the live map with their callsign first letter
-  const lobbyPlayerMarkers: VisiblePlayerMarker[] = room.players.map((p) => ({
-    player: p,
-    position: p.lastPos ?? {
-      lat: s.zone.center.lat,
-      lng: s.zone.center.lng,
-      ts: p.lastSeenAt,
-    },
-    isExposedOob: false,
-    isEmergencyPin: false,
-    isDelayed: false,
-  }));
+  const activeModeMeta = GAME_MODES.find((m) => m.id === s.mode) ?? GAME_MODES[0];
+  const activeMapMeta =
+    MAP_THEME_OPTIONS.find((m) => m.id === personalMapTheme) ?? MAP_THEME_OPTIONS[0];
+
+  const lobbyPlayerMarkers: VisiblePlayerMarker[] = useMemo(
+    () =>
+      room.players.map((p) => ({
+        player: p,
+        position: p.lastPos ?? {
+          lat: s.zone.center.lat,
+          lng: s.zone.center.lng,
+          ts: p.lastSeenAt,
+        },
+        isExposedOob: false,
+        isEmergencyPin: false,
+        isDelayed: false,
+      })),
+    [room.players, s.zone.center.lat, s.zone.center.lng]
+  );
 
   const inviteUrl =
     typeof window !== 'undefined'
@@ -119,40 +141,64 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     }
   };
 
+  const handleCommitCode = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = formatRoomCodeInput(codeDraft);
+    if (cleaned.length === 6 && cleaned !== room.code) {
+      onChangeRoomCode(cleaned);
+    }
+    setEditingCode(false);
+  };
+
   const patchSettings = (patch: Partial<RoomSettings>) => {
     if (!isHost) return;
     onUpdateSettings({ ...s, ...patch });
   };
 
-  const handleZoneShapeChange = (shape: ActiveZone['shape']) => {
-    if (!isHost) return;
-    const nextPolygon =
-      s.zone.polygon.length >= 3 ? s.zone.polygon : createDefaultPolygonAround(s.zone.center, 450);
-    patchSettings({
-      zone: {
-        ...s.zone,
-        shape,
-        polygon: nextPolygon,
-      },
-    });
+  const stepOption = (values: number[], current: number, delta: -1 | 1): number => {
+    if (delta > 0) {
+      return values.find((v) => v > current) ?? values[values.length - 1];
+    }
+    const lower = [...values].reverse().find((v) => v < current);
+    return lower !== undefined ? lower : values[0];
   };
 
-  const handleAddPolygonVertex = () => {
-    if (!isHost || s.zone.polygon.length < 2) return;
-    const poly = s.zone.polygon;
-    const last = poly[poly.length - 1];
-    const first = poly[0];
-    const mid: LatLng = {
-      lat: roundCoord((last.lat + first.lat) / 2 + 0.0004),
-      lng: roundCoord((last.lng + first.lng) / 2 + 0.0004),
-    };
-    patchSettings({ zone: { ...s.zone, polygon: [...poly, mid] } });
+  const activePresetId = useMemo(() => {
+    if (s.roundLengthMin === 15 && s.pingIntervalMin === 1 && s.headStartMin === 1) return 'quick';
+    if (s.roundLengthMin === 60 && s.pingIntervalMin === 2 && s.headStartMin === 3)
+      return 'standard';
+    if (s.roundLengthMin === 120 && s.pingIntervalMin === 5 && s.headStartMin === 5)
+      return 'big_park';
+    return null;
+  }, [s.roundLengthMin, s.pingIntervalMin, s.headStartMin]);
+
+  const formatRoundLength = (min: number) => {
+    if (min < 60) return `${min} min`;
+    const hrs = Math.floor(min / 60);
+    const rem = min % 60;
+    return rem === 0 ? `${hrs} hr` : `${hrs}h ${rem}m`;
   };
 
-  const handleRemovePolygonVertex = () => {
-    if (!isHost || s.zone.polygon.length <= 3) return;
-    patchSettings({ zone: { ...s.zone, polygon: s.zone.polygon.slice(0, -1) } });
-  };
+  const zoneSummary =
+    s.zone.shape === 'off'
+      ? 'Off · play anywhere without boundaries'
+      : s.zone.shape === 'polygon'
+      ? `Drawn (${s.zone.polygon.length} corners)${
+          s.zoneShrinkEnabled
+            ? ` · Shrinks to ${formatZoneSize(s.finalZoneDiameterMeters, s.units)}`
+            : ' · Fixed'
+        }`
+      : `${formatZoneSize(s.zone.diameterMeters, s.units)} across${
+          s.zoneShrinkEnabled
+            ? ` · Shrinks to ${formatZoneSize(s.finalZoneDiameterMeters, s.units)}`
+            : ' · Fixed'
+        }`;
+
+  const hunterPrefCount = room.players.filter((p) => p.preference === 'hunter').length;
+  const runnerPrefCount = room.players.filter((p) => p.preference === 'runner').length;
+  const randomPrefCount = room.players.filter((p) => p.preference === 'random').length;
+  const maxHunters = room.players.length >= 2 ? Math.floor(room.players.length / 2) : 1;
+  const minHunters = room.players.length >= 2 ? Math.max(1, Math.ceil(room.players.length / 10)) : 1;
 
   const handleSavePresetSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,741 +206,765 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     if (!trimmed) return;
     onSaveCustomPreset(trimmed);
     setPresetName('');
-    setShowPresetForm(false);
   };
-
-  const showMap = mobileView === 'map';
 
   return (
     <div className="min-h-dvh bg-[#08090E] text-[#F4F5F9] flex flex-col">
-      {/* Clean Sticky Header */}
-      <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#0A0B12]/92 backdrop-blur-md pt-safe">
+      {/* Clean Sticky Lobby Top Bar */}
+      <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#0A0C13]/92 backdrop-blur-xl pt-safe">
         <div
           data-testid="lobby-header-bar"
-          className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-3"
+          className="max-w-7xl mx-auto px-3 sm:px-6 h-15 flex items-center justify-between gap-2"
         >
-          <div data-testid="lobby-room-code-block" className="shrink-0">
-            <div className="text-[10px] sm:text-[11px] font-medium text-slate-400 whitespace-nowrap leading-tight">
-              Room Code
-            </div>
-            <div className="font-mono text-lg sm:text-2xl font-bold tracking-[0.12em] sm:tracking-[0.18em] text-emerald-400 leading-none tabular-nums whitespace-nowrap mt-0.5">
-              {room.code}
-            </div>
+          <div className="flex items-center gap-1 min-w-0">
+            <button
+              type="button"
+              onClick={onLeaveLobby}
+              aria-label="Leave lobby"
+              className="min-h-[44px] px-2 -ml-1 rounded-xl text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 text-sm font-bold shrink-0"
+            >
+              <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+              <span>Back</span>
+            </button>
           </div>
 
-          <div data-testid="lobby-header-actions" className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <motion.button
-              whileTap={{ scale: 0.96 }}
-              type="button"
-              onClick={handleCopyInvite}
-              className="min-h-[40px] sm:min-h-[44px] px-2.5 sm:px-3.5 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center gap-1.5 whitespace-nowrap"
-            >
-              {copied ? (
-                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              ) : (
-                <Copy className="w-4 h-4 text-emerald-400 shrink-0" />
-              )}
-              <span className="sm:hidden">{copied ? 'Copied' : 'Invite'}</span>
-              <span className="hidden sm:inline">{copied ? 'Copied' : 'Invite Link'}</span>
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
+          <h1 className="font-display text-2xl font-extrabold tracking-wide text-white leading-none">
+            {room.isSoloDemo ? 'Demo Lobby' : 'Lobby'}
+          </h1>
+
+          <div data-testid="lobby-header-actions" className="flex items-center gap-1.5 shrink-0">
+            <button
               type="button"
               onClick={onShowQr}
               aria-label="Show QR Code"
-              className="min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] sm:px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
             >
-              <QrCode className="w-4 h-4 text-emerald-400" />
-              <span className="hidden sm:inline">QR Code</span>
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.95 }}
+              <QrCode className="w-4 h-4" />
+            </button>
+            <button
               type="button"
               onClick={onOpenChat}
               aria-label="Open Lobby Radio"
-              className="relative min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] sm:px-3 rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 text-xs font-semibold text-white inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+              className="relative min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
             >
-              <Radio className="w-4 h-4 text-emerald-400" />
-              <span className="hidden sm:inline">Radio</span>
+              <Radio className="w-4 h-4" />
               {unreadChatCount > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-400 text-[#08090E] text-[10px] font-extrabold flex items-center justify-center tabular-nums">
                   {unreadChatCount}
                 </span>
               )}
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.94 }}
+            </button>
+            <button
               type="button"
               onClick={onOpenMoreMenu}
-              aria-label="More options and Get Help"
-              className="min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] rounded-xl bg-[#151824] hover:bg-[#1D2131] border border-white/10 flex items-center justify-center text-white"
+              aria-label="More options"
+              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-white"
             >
               <MoreHorizontal className="w-5 h-5" />
-            </motion.button>
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Mobile 3-Tab Switcher (keeps each screen uncluttered) */}
-      <div className="lg:hidden px-4 pt-3">
-        <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-[#10121C] border border-white/[0.08]">
-          {(
-            [
-              { id: 'squad', label: `Squad (${room.players.length})` },
-              { id: 'rules', label: 'Rules' },
-              { id: 'map', label: 'Play Zone' },
-            ] as const
-          ).map((tab) => {
-            const active = mobileView === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => {
-                  setMobileView(tab.id);
-                  if (tab.id !== 'map') setPanelTab(tab.id);
-                }}
-                className={`relative min-h-[40px] rounded-xl text-xs font-bold transition-colors whitespace-nowrap ${
-                  active ? 'text-[#08090E]' : 'text-slate-300'
-                }`}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="lobby-mobile-tab"
-                    transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                    className="absolute inset-0 rounded-xl bg-emerald-400"
-                  />
-                )}
-                <span className="relative z-10">{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* Main Content: Single Scannable Scroll Column on Mobile, 2-Column with Live Map on Desktop */}
+      <main
+        className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 pt-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
+        style={{ paddingBottom: 'calc(98px + max(env(safe-area-inset-bottom, 0px), 12px))' }}
+      >
+        <div className="lg:col-span-6 space-y-4">
+          {/* 1. GAME CODE CARD (Editable Custom 6-Char Code + Copy) */}
+          <section className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 sm:p-5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div data-testid="lobby-room-code-block" className="min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Game code · {room.isSoloDemo ? 'Practice' : isHost ? 'Hosting' : 'Joined'}
+                </div>
 
-      {/* Main Split Workspace */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 pb-28 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Panel: Clean Tabbed Squad & Rules */}
-        <section
-          className={`lg:col-span-5 flex flex-col rounded-3xl bg-[#10121C] border border-white/[0.08] overflow-hidden ${
-            showMap ? 'hidden lg:flex' : 'flex'
-          }`}
-        >
-          {/* Desktop Panel Sub-Tabs */}
-          <div className="hidden lg:grid grid-cols-2 gap-1 p-2 border-b border-white/[0.07] bg-[#0B0D14]">
-            {(
-              [
-                { id: 'squad', label: `Squad (${room.players.length})` },
-                { id: 'rules', label: 'Mode & Rules' },
-              ] as const
-            ).map((tab) => {
-              const active = panelTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => {
-                    setPanelTab(tab.id);
-                    setMobileView(tab.id);
-                  }}
-                  className={`relative min-h-[40px] rounded-xl text-xs font-bold transition-colors ${
-                    active ? 'text-[#08090E]' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {active && (
-                    <motion.span
-                      layoutId="lobby-desktop-tab"
-                      transition={{ type: 'spring', stiffness: 460, damping: 34 }}
-                      className="absolute inset-0 rounded-xl bg-emerald-400"
+                {editingCode ? (
+                  <form onSubmit={handleCommitCode} className="mt-2 flex items-center gap-2">
+                    <input
+                      data-testid="custom-code-input"
+                      type="text"
+                      maxLength={6}
+                      autoFocus
+                      value={codeDraft}
+                      onChange={(e) => setCodeDraft(formatRoomCodeInput(e.target.value))}
+                      className="w-36 min-h-[42px] px-3 rounded-xl bg-[#08090E] border border-emerald-400 font-mono text-xl font-extrabold tracking-[0.18em] text-emerald-300 uppercase focus:outline-none"
                     />
+                    <button
+                      type="submit"
+                      disabled={codeDraft.length !== 6}
+                      className="min-h-[42px] px-3.5 rounded-xl bg-emerald-500 disabled:opacity-40 text-[#08090E] text-xs font-extrabold"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodeDraft(room.code);
+                        setEditingCode(false);
+                      }}
+                      className="min-h-[42px] px-2.5 text-xs font-semibold text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div
+                    data-testid="lobby-code-value"
+                    className="mt-1 font-mono text-3xl sm:text-4xl font-extrabold tracking-[0.18em] text-emerald-400 leading-none tabular-nums"
+                  >
+                    {room.code}
+                  </div>
+                )}
+              </div>
+
+              {!editingCode && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyInvite}
+                    className="min-h-[40px] px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-xs font-bold text-white inline-flex items-center gap-1.5"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    <span>{copied ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  {isHost && (
+                    <button
+                      type="button"
+                      data-testid="change-room-code-btn"
+                      onClick={() => {
+                        setCodeDraft(room.code);
+                        setEditingCode(true);
+                      }}
+                      className="min-h-[40px] px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-xs font-bold text-slate-200"
+                    >
+                      Change
+                    </button>
                   )}
-                  <span className="relative z-10">{tab.label}</span>
-                </button>
-              );
-            })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 2. GAME MODE & YOUR MAP COMPACT CARDS */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Game Mode Card */}
+            <section className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <img
+                  src={activeModeMeta.art}
+                  alt={activeModeMeta.name}
+                  className="w-12 h-14 rounded-xl object-cover border border-white/15 shrink-0 bg-[#08090E]"
+                />
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Game mode
+                  </div>
+                  <div className="text-base font-extrabold text-white truncate">
+                    {activeModeMeta.name}
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate">
+                    {activeModeMeta.tagline}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="lobby-change-mode-btn"
+                onClick={() => setShowModeSheet(true)}
+                className="min-h-[40px] px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-xs font-bold text-emerald-300 shrink-0"
+              >
+                Change
+              </button>
+            </section>
+
+            {/* Personal Map Theme Card */}
+            <section className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div
+                  className="w-12 h-14 rounded-xl border border-white/15 flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: activeMapMeta.previewBg }}
+                >
+                  <MapIcon
+                    className="w-5 h-5"
+                    style={{ color: activeMapMeta.zoneColor }}
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Your map
+                  </div>
+                  <div className="text-base font-extrabold text-white truncate">
+                    {activeMapMeta.name}
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate">Only on your screen.</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="lobby-change-map-btn"
+                onClick={() => setShowMapSheet(true)}
+                className="min-h-[40px] px-3.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08] text-xs font-bold text-emerald-300 shrink-0"
+              >
+                Change
+              </button>
+            </section>
           </div>
 
-          <div className="p-4 sm:p-5 space-y-5 flex-1">
-            <AnimatePresence mode="wait">
-              {panelTab === 'squad' ? (
-                <motion.div
-                  key="squad"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.16 }}
-                  className="space-y-5"
-                >
-                  {/* Team Preference */}
-                  <div>
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">
-                      Your Team Preference
-                    </h2>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(['hunter', 'runner', 'random'] as TeamPreference[]).map((pref) => {
-                        const active = viewer?.preference === pref;
-                        return (
-                          <motion.button
-                            whileTap={{ scale: 0.96 }}
-                            key={pref}
-                            type="button"
-                            onClick={() => onUpdatePreference(pref)}
-                            className={`min-h-[44px] rounded-xl text-xs font-bold border transition-colors capitalize ${
-                              active
-                                ? pref === 'hunter'
-                                  ? 'bg-red-500/20 border-red-400 text-red-200'
-                                  : pref === 'runner'
-                                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
-                                  : 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
-                                : 'bg-[#090A10] border-white/[0.08] text-slate-400 hover:text-white'
-                            }`}
-                          >
-                            {pref}
-                          </motion.button>
-                        );
-                      })}
-                    </div>
-                  </div>
+          {/* 3. HOUSE RULES CARD (Presets + Thumb-Friendly Steppers + Hunters Can Talk + Play Zone Sheet) */}
+          <section className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                House rules
+              </h2>
+              {!isHost && (
+                <span className="text-[11px] text-slate-500">Host controls rules</span>
+              )}
+            </div>
 
-                  {/* Game Mode Compact Grid */}
+            {/* 3-Way Preset Segmented Bar */}
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-[#08090E] border border-white/[0.07]">
+                {BUILT_IN_PRESETS.map((preset) => {
+                  const active = activePresetId === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={!isHost}
+                      onClick={() => onUpdateSettings(applyBuiltInPreset(s, preset.id))}
+                      className={`min-h-[40px] rounded-xl text-xs font-bold transition-colors disabled:opacity-70 ${
+                        active
+                          ? 'bg-emerald-500 text-[#08090E]'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {preset.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-400 px-1">
+                {activePresetId
+                  ? BUILT_IN_PRESETS.find((p) => p.id === activePresetId)?.summary
+                  : 'Custom house rules active'}
+              </p>
+            </div>
+
+            {/* Stepper Rows */}
+            <div className="divide-y divide-white/[0.07]">
+              {/* Round Length */}
+              <div className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-white">Round length</div>
+                  <div className="text-xs text-slate-400">Total hunt timer</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={!isHost || s.roundLengthMin <= ROUND_STEPS[0]}
+                    onClick={() =>
+                      patchSettings({
+                        roundLengthMin: stepOption(ROUND_STEPS, s.roundLengthMin, -1),
+                      })
+                    }
+                    aria-label="Decrease round length"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <span className="font-mono text-sm font-bold text-white min-w-[58px] text-center tabular-nums">
+                    {formatRoundLength(s.roundLengthMin)}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!isHost || s.roundLengthMin >= ROUND_STEPS[ROUND_STEPS.length - 1]}
+                    onClick={() =>
+                      patchSettings({
+                        roundLengthMin: stepOption(ROUND_STEPS, s.roundLengthMin, 1),
+                      })
+                    }
+                    aria-label="Increase round length"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Head Start */}
+              <div className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-white">Head start</div>
+                  <div className="text-xs text-slate-400">Time for Runners to scatter</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={!isHost || s.headStartMin <= 0}
+                    onClick={() =>
+                      patchSettings({
+                        headStartMin: stepOption(HEAD_START_STEPS, s.headStartMin, -1),
+                      })
+                    }
+                    aria-label="Decrease head start"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <span className="font-mono text-sm font-bold text-amber-300 min-w-[58px] text-center tabular-nums">
+                    {s.headStartMin === 0 ? 'Off' : `${s.headStartMin} min`}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!isHost || s.headStartMin >= 30}
+                    onClick={() =>
+                      patchSettings({
+                        headStartMin: stepOption(HEAD_START_STEPS, s.headStartMin, 1),
+                      })
+                    }
+                    aria-label="Increase head start"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Radar Pings */}
+              <div className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-white">Pings</div>
+                  <div className="text-xs text-slate-400">How often Runners blip on radar</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={!isHost || s.pingIntervalMin <= 0}
+                    onClick={() =>
+                      patchSettings({
+                        pingIntervalMin: stepOption(PING_STEPS, s.pingIntervalMin, -1),
+                      })
+                    }
+                    aria-label="Decrease ping interval"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <span className="font-mono text-sm font-bold text-cyan-300 min-w-[58px] text-center tabular-nums">
+                    {s.pingIntervalMin === 0 ? 'Off' : `${s.pingIntervalMin} min`}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!isHost || s.pingIntervalMin >= 30}
+                    onClick={() =>
+                      patchSettings({
+                        pingIntervalMin: stepOption(PING_STEPS, s.pingIntervalMin, 1),
+                      })
+                    }
+                    aria-label="Increase ping interval"
+                    className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Hunters Can Talk Toggle */}
+              <div className="py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-white">Hunters can talk</div>
+                  <div className="text-xs text-slate-400">Private Hunter team radio channel</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={s.huntersCanTalk !== false}
+                  disabled={!isHost}
+                  onClick={() => patchSettings({ huntersCanTalk: !(s.huntersCanTalk !== false) })}
+                  className={`relative w-12 h-7 rounded-full transition-colors shrink-0 disabled:opacity-60 ${
+                    s.huntersCanTalk !== false ? 'bg-emerald-500' : 'bg-[#252A3B]'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform ${
+                      s.huntersCanTalk !== false ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Play Zone Toggle + Full-Screen Editor Trigger */}
+              <div className="pt-3 space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2.5">
-                      Game Mode
-                    </h2>
+                    <div className="text-sm font-bold text-white">Play zone</div>
+                    <div className="text-xs text-slate-400">Out-of-bounds auto-eliminates in 30s</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={s.zone.shape !== 'off'}
+                    disabled={!isHost}
+                    onClick={() =>
+                      patchSettings({
+                        zone: {
+                          ...s.zone,
+                          shape: s.zone.shape === 'off' ? 'circle' : 'off',
+                        },
+                      })
+                    }
+                    className={`relative w-12 h-7 rounded-full transition-colors shrink-0 disabled:opacity-60 ${
+                      s.zone.shape !== 'off' ? 'bg-emerald-500' : 'bg-[#252A3B]'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform ${
+                        s.zone.shape !== 'off' ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {s.zone.shape !== 'off' && (
+                  <button
+                    type="button"
+                    data-testid="open-play-zone-editor-btn"
+                    disabled={!isHost}
+                    onClick={() => setShowZoneEditor(true)}
+                    className="w-full min-h-[48px] px-3.5 py-2.5 rounded-2xl bg-[#090B12] hover:bg-[#141827] border border-emerald-500/25 flex items-center justify-between gap-2 text-left transition-colors disabled:opacity-75"
+                  >
+                    <span className="text-xs sm:text-sm font-semibold text-emerald-300 truncate tabular-nums">
+                      {zoneSummary}
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Collapsible Advanced Settings (Spectators, Units, Saved Presets) */}
+            <div className="pt-2 border-t border-white/[0.06]">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="w-full min-h-[38px] flex items-center justify-between text-xs font-bold text-slate-400 hover:text-white"
+              >
+                <span>Units, spectators &amp; saved setups</span>
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+                />
+              </button>
+
+              {showAdvanced && (
+                <div className="pt-3 space-y-4">
+                  {/* Distance Units */}
+                  <div>
+                    <div className="text-xs font-semibold text-slate-300 mb-1.5">Distance units</div>
                     <div className="grid grid-cols-2 gap-2">
-                      {MODES.map((m) => (
-                        <motion.button
-                          whileTap={{ scale: 0.97 }}
-                          key={m.id}
+                      {(['mi', 'km'] as UnitSystem[]).map((u) => (
+                        <button
+                          key={u}
                           type="button"
                           disabled={!isHost}
-                          onClick={() => patchSettings({ mode: m.id })}
-                          className={`p-3 rounded-xl border text-left transition-colors disabled:opacity-75 ${
-                            s.mode === m.id
-                              ? 'bg-emerald-500/12 border-emerald-500/70 text-white'
-                              : 'bg-[#090A10] border-white/[0.08] text-slate-300 hover:bg-[#141724]'
+                          onClick={() => patchSettings({ units: u })}
+                          className={`min-h-[40px] rounded-xl text-xs font-bold border transition-colors ${
+                            s.units === u
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                              : 'bg-[#08090E] border-white/[0.08] text-slate-400'
                           }`}
                         >
-                          <div className="text-sm font-bold">{m.label}</div>
-                          <div className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                            {m.desc}
-                          </div>
-                        </motion.button>
+                          {u === 'mi' ? 'Miles & Feet (US)' : 'Kilometers'}
+                        </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Squad Roster — shows ALL players inside the lobby */}
-                  <div data-testid="lobby-players-list">
-                    <div className="flex items-center justify-between mb-2.5">
-                      <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Players in Lobby ({room.players.length})
-                      </h2>
-                      <span className="text-[11px] text-emerald-400 font-medium">
-                        {room.players.filter((p) => p.connected).length} online
-                      </span>
-                    </div>
-                    <div className="divide-y divide-white/[0.06] rounded-2xl bg-[#090A10] border border-white/[0.07] overflow-hidden">
-                      {room.players.map((p) => (
-                        <div
-                          key={p.id}
-                          className="flex items-center justify-between gap-2 px-3.5 py-3"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <span
-                              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold text-[#08090E] shrink-0"
-                              style={{ backgroundColor: p.color }}
-                            >
-                              {getCallsignInitial(p.name)}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="text-sm font-semibold text-white truncate">
-                                  {p.name}
-                                  {p.id === viewerId ? ' (You)' : ''}
-                                </span>
-                                {p.isHost && (
-                                  <span className="text-[11px] font-semibold text-cyan-400 shrink-0">
-                                    Host
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                                <span
-                                  className={`w-1.5 h-1.5 rounded-full ${
-                                    p.connected ? 'bg-emerald-400' : 'bg-slate-500'
-                                  }`}
-                                />
-                                <span>{p.connected ? 'Ready in lobby' : 'Reconnecting'}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <span className="text-xs font-medium text-slate-300 capitalize">
-                              {p.preference}
-                            </span>
-                            {isHost && p.id !== viewerId && (
-                              <button
-                                type="button"
-                                onClick={() => onRemovePlayer(p.id)}
-                                aria-label={`Remove ${p.name}`}
-                                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/15"
-                              >
-                                <UserMinus className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="rules"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.16 }}
-                  className="space-y-5"
-                >
-                  {/* Built-in + Custom Presets */}
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Quick Presets
-                      </h2>
-                      {isHost && (
-                        <button
-                          type="button"
-                          onClick={() => setShowPresetForm((v) => !v)}
-                          className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>Save Setup</span>
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2">
-                      {BUILT_IN_PRESETS.map((preset) => (
-                        <motion.button
-                          whileTap={{ scale: 0.96 }}
-                          key={preset.id}
-                          type="button"
-                          disabled={!isHost}
-                          onClick={() => onUpdateSettings(applyBuiltInPreset(s, preset.id))}
-                          className="min-h-[54px] px-2.5 py-2 rounded-xl bg-[#090A10] hover:bg-[#151927] border border-white/[0.08] text-left transition-colors disabled:opacity-60"
-                        >
-                          <div className="text-xs font-bold text-white">{preset.name}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">
-                            {preset.summary}
-                          </div>
-                        </motion.button>
-                      ))}
-                    </div>
-
-                    {showPresetForm && isHost && (
-                      <form onSubmit={handleSavePresetSubmit} className="flex gap-2 pt-1">
-                        <input
-                          type="text"
-                          value={presetName}
-                          onChange={(e) => setPresetName(e.target.value)}
-                          placeholder="Preset name"
-                          className="flex-1 min-h-[42px] px-3 rounded-xl bg-[#090A10] border border-white/10 text-xs text-white placeholder:text-slate-500"
-                        />
-                        <button
-                          type="submit"
-                          className="min-h-[42px] px-4 rounded-xl bg-emerald-500 text-[#08090E] text-xs font-bold"
-                        >
-                          Save
-                        </button>
-                      </form>
-                    )}
-
-                    {customPresets.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
-                        {customPresets.map((cp) => (
-                          <div
-                            key={cp.id}
-                            className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#090A10] border border-white/[0.08]"
-                          >
-                            <button
-                              type="button"
-                              disabled={!isHost}
-                              onClick={() => onUpdateSettings(cp.settings)}
-                              className="flex-1 text-left text-xs font-semibold text-cyan-300 hover:text-cyan-200 truncate"
-                            >
-                              {cp.name} · {cp.settings.mode} · {cp.settings.roundLengthMin}m
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onDeleteCustomPreset(cp.id)}
-                              aria-label={`Delete preset ${cp.name}`}
-                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-400 hover:text-red-400"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Timers & Zone Shrink Sliders */}
-                  <div className="space-y-4 pt-4 border-t border-white/[0.07]">
+                  {/* Spectator Access (Classic Mode) */}
+                  {s.mode === 'classic' && (
                     <div>
-                      <div className="flex justify-between text-xs mb-2">
-                        <label htmlFor="slider-round-len" className="text-slate-300 font-medium">
-                          Round Length
-                        </label>
-                        <span className="font-mono font-bold text-white tabular-nums">
-                          {s.roundLengthMin >= 60
-                            ? `${Math.floor(s.roundLengthMin / 60)}h ${s.roundLengthMin % 60}m`
-                            : `${s.roundLengthMin} min`}
-                        </span>
+                      <div className="text-xs font-semibold text-slate-300 mb-1.5">
+                        Spectator map feed
                       </div>
-                      <input
-                        id="slider-round-len"
-                        type="range"
-                        min={5}
-                        max={180}
-                        step={5}
-                        disabled={!isHost}
-                        value={s.roundLengthMin}
-                        onChange={(e) => patchSettings({ roundLengthMin: Number(e.target.value) })}
-                        className="w-full fk-slider"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-2">
-                        <label htmlFor="slider-ping-int" className="text-slate-300 font-medium">
-                          Runner Radar Ping Interval
-                        </label>
-                        <span className="font-mono font-bold text-cyan-400 tabular-nums">
-                          {s.pingIntervalMin === 0 ? 'Off' : `Every ${s.pingIntervalMin} min`}
-                        </span>
-                      </div>
-                      <input
-                        id="slider-ping-int"
-                        type="range"
-                        min={0}
-                        max={30}
-                        step={1}
-                        disabled={!isHost}
-                        value={s.pingIntervalMin}
-                        onChange={(e) => patchSettings({ pingIntervalMin: Number(e.target.value) })}
-                        className="w-full fk-slider"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-2">
-                        <label htmlFor="slider-head-start" className="text-slate-300 font-medium">
-                          Head Start (Scatter)
-                        </label>
-                        <span className="font-mono font-bold text-amber-400 tabular-nums">
-                          {s.headStartMin === 0 ? 'None' : `${s.headStartMin} min`}
-                        </span>
-                      </div>
-                      <input
-                        id="slider-head-start"
-                        type="range"
-                        min={0}
-                        max={30}
-                        step={1}
-                        disabled={!isHost}
-                        value={s.headStartMin}
-                        onChange={(e) => patchSettings({ headStartMin: Number(e.target.value) })}
-                        className="w-full fk-slider"
-                      />
-                    </div>
-
-                    <div className="pt-3 border-t border-white/[0.07] space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold text-white">
-                          {s.mode === 'curfew' ? 'Curfew Zone Teleports' : 'Shrinking Zone'}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={!isHost}
-                          onClick={() => patchSettings({ zoneShrinkEnabled: !s.zoneShrinkEnabled })}
-                          className={`min-h-[38px] px-4 rounded-xl text-xs font-bold transition-colors ${
-                            s.zoneShrinkEnabled
-                              ? 'bg-emerald-500 text-[#08090E]'
-                              : 'bg-[#090A10] text-slate-400 border border-white/10'
-                          }`}
-                        >
-                          {s.zoneShrinkEnabled ? 'On' : 'Off'}
-                        </button>
-                      </div>
-
-                      {s.zoneShrinkEnabled && s.zone.shape !== 'off' && (
-                        <div>
-                          <div className="flex justify-between text-xs mb-2">
-                            <label htmlFor="slider-final-zone" className="text-slate-300 font-medium">
-                              Final Shrink Size
-                            </label>
-                            <span className="font-mono font-bold text-amber-300 tabular-nums">
-                              {formatZoneSize(s.finalZoneDiameterMeters, s.units)}
-                            </span>
-                          </div>
-                          <input
-                            id="slider-final-zone"
-                            type="range"
-                            min={150}
-                            max={Math.max(300, Math.min(3000, s.zone.diameterMeters - 50))}
-                            step={50}
-                            disabled={!isHost}
-                            value={Math.min(s.finalZoneDiameterMeters, s.zone.diameterMeters)}
-                            onChange={(e) =>
-                              patchSettings({ finalZoneDiameterMeters: Number(e.target.value) })
-                            }
-                            className="w-full fk-slider"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {s.mode === 'classic' && (
-                      <div className="pt-3 border-t border-white/[0.07]">
-                        <div className="text-xs font-semibold text-slate-300 mb-2">
-                          Eliminated Spectator Map Access
-                        </div>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {(
-                            [
-                              { id: 'live', label: 'Live All' },
-                              { id: 'delayed_1m', label: '1-Min Delay' },
-                              { id: 'disabled', label: 'Disabled' },
-                            ] as { id: SpectatorAccess; label: string }[]
-                          ).map((opt) => (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              disabled={!isHost}
-                              onClick={() => patchSettings({ spectatorAccess: opt.id })}
-                              className={`min-h-[40px] rounded-xl text-xs font-semibold transition-colors whitespace-nowrap ${
-                                s.spectatorAccess === opt.id
-                                  ? 'bg-emerald-500 text-[#08090E]'
-                                  : 'bg-[#090A10] text-slate-300 border border-white/[0.08]'
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Units (American Miles default) */}
-                    <div className="pt-3 border-t border-white/[0.07]">
-                      <div className="text-xs font-semibold text-slate-300 mb-2">Distance Units</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {(['mi', 'km'] as UnitSystem[]).map((u) => (
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {(
+                          [
+                            { id: 'live', label: 'Live' },
+                            { id: 'delayed_1m', label: '1m Delay' },
+                            { id: 'disabled', label: 'Off' },
+                          ] as { id: SpectatorAccess; label: string }[]
+                        ).map((opt) => (
                           <button
-                            key={u}
+                            key={opt.id}
                             type="button"
                             disabled={!isHost}
-                            onClick={() => patchSettings({ units: u })}
-                            className={`min-h-[40px] rounded-xl text-xs font-bold transition-colors ${
-                              s.units === u
-                                ? 'bg-white text-[#08090E]'
-                                : 'bg-[#090A10] text-slate-400 border border-white/[0.08]'
+                            onClick={() => patchSettings({ spectatorAccess: opt.id })}
+                            className={`min-h-[38px] rounded-xl text-xs font-bold border ${
+                              s.spectatorAccess === opt.id
+                                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
+                                : 'bg-[#08090E] border-white/[0.08] text-slate-400'
                             }`}
                           >
-                            {u === 'mi' ? 'Miles & Feet (US)' : 'Kilometers'}
+                            {opt.label}
                           </button>
                         ))}
                       </div>
                     </div>
-                  </div>
-                </motion.div>
+                  )}
+
+                  {/* Save Custom Preset */}
+                  {isHost && (
+                    <div className="space-y-2">
+                      <form onSubmit={handleSavePresetSubmit} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={presetName}
+                          onChange={(e) => setPresetName(e.target.value)}
+                          placeholder="Save setup as preset..."
+                          className="flex-1 min-h-[40px] px-3 rounded-xl bg-[#08090E] border border-white/10 text-xs text-white placeholder:text-slate-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!presetName.trim()}
+                          className="min-h-[40px] px-3.5 rounded-xl bg-emerald-500 disabled:opacity-40 text-[#08090E] text-xs font-bold inline-flex items-center gap-1"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Save</span>
+                        </button>
+                      </form>
+                      {customPresets.map((cp) => (
+                        <div
+                          key={cp.id}
+                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#08090E] border border-white/[0.08]"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => onUpdateSettings(cp.settings)}
+                            className="flex-1 text-left text-xs font-semibold text-emerald-300 truncate"
+                          >
+                            {cp.name} · {cp.settings.mode} · {cp.settings.roundLengthMin}m
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteCustomPreset(cp.id)}
+                            aria-label={`Delete preset ${cp.name}`}
+                            className="min-h-[32px] min-w-[32px] flex items-center justify-center text-slate-400 hover:text-red-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
-            </AnimatePresence>
-          </div>
-        </section>
+            </div>
+          </section>
 
-        {/* Right Panel: Interactive Play Zone & Live Map Theme Bar */}
-        <section
-          className={`lg:col-span-7 flex flex-col rounded-3xl bg-[#10121C] border border-white/[0.08] overflow-hidden min-h-[520px] lg:h-[calc(100dvh-160px)] lg:sticky lg:top-20 ${
-            !showMap ? 'hidden lg:flex' : 'flex'
-          }`}
-        >
-          <div className="relative z-10 bg-[#10121C] p-4 border-b border-white/[0.07] space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-bold text-white">Play Zone</h2>
-                <p className="text-xs text-slate-400">
-                  {s.zone.shape === 'off'
-                    ? 'Open world — play anywhere'
-                    : s.zone.shape === 'circle'
-                    ? 'Tap map or drag pin to move boundary'
-                    : 'Tap map to add corners · Drag points to reshape'}
-                </p>
-              </div>
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-[#090A10] border border-white/[0.08]">
-                {(
-                  [
-                    { id: 'off', label: 'Off' },
-                    { id: 'circle', label: 'Circle' },
-                    { id: 'polygon', label: 'Polygon' },
-                  ] as { id: ActiveZone['shape']; label: string }[]
-                ).map((mode) => (
+          {/* 4. YOU PLAY AS SECTION */}
+          <section className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 sm:p-5 space-y-3">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              You play as
+            </h2>
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-[#08090E] border border-white/[0.07]">
+              {(['hunter', 'runner', 'random'] as TeamPreference[]).map((pref) => {
+                const active = viewer?.preference === pref;
+                return (
                   <button
-                    key={mode.id}
+                    key={pref}
                     type="button"
-                    disabled={!isHost}
-                    onClick={() => handleZoneShapeChange(mode.id)}
-                    className={`min-h-[38px] px-3 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
-                      s.zone.shape === mode.id
-                        ? 'bg-emerald-500 text-[#08090E]'
+                    onClick={() => onUpdatePreference(pref)}
+                    className={`min-h-[44px] rounded-xl text-xs sm:text-sm font-bold capitalize transition-colors ${
+                      active
+                        ? pref === 'hunter'
+                          ? 'bg-red-500 text-white'
+                          : pref === 'runner'
+                          ? 'bg-emerald-500 text-[#08090E]'
+                          : 'bg-emerald-400 text-[#08090E]'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    {mode.label}
+                    {pref}
                   </button>
-                ))}
-              </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              With {room.players.length} {room.players.length === 1 ? 'player' : 'players'}:{' '}
+              {minHunters === maxHunters
+                ? `${minHunters} hunter`
+                : `${minHunters} to ${maxHunters} hunters`}
+              . Random fills whichever team needs it and unlocks tap-to-reveal.
+            </p>
+          </section>
+
+          {/* 5. PLAYERS LIST */}
+          <section
+            data-testid="lobby-players-list"
+            className="rounded-[24px] bg-[#10131E] border border-white/[0.09] p-4 sm:p-5 space-y-3"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Players ({room.players.length})
+              </h2>
+              <span className="text-[11px] text-slate-400 tabular-nums">
+                {hunterPrefCount} hunters · {runnerPrefCount} runners · {randomPrefCount} random
+              </span>
             </div>
 
-            {s.zone.shape === 'circle' && (
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <label htmlFor="slider-zone-diam" className="text-slate-300 font-medium">
-                    Zone Diameter ({s.units === 'mi' ? '650 ft – 3.7 mi' : '200 m – 6 km'})
-                  </label>
-                  <span className="font-mono font-bold text-emerald-400 tabular-nums">
-                    {formatZoneSize(s.zone.diameterMeters, s.units)}
-                  </span>
-                </div>
-                <input
-                  id="slider-zone-diam"
-                  type="range"
-                  min={200}
-                  max={6000}
-                  step={100}
-                  disabled={!isHost}
-                  value={s.zone.diameterMeters}
-                  onChange={(e) =>
-                    patchSettings({
-                      zone: { ...s.zone, diameterMeters: Number(e.target.value) },
-                    })
-                  }
-                  className="w-full fk-slider"
-                />
-              </div>
+            {room.isSoloDemo && (
+              <p className="text-[11px] text-emerald-300/80">
+                Tap any AI bot below to switch their team pick before starting.
+              </p>
             )}
 
-            {s.zone.shape === 'polygon' && isHost && (
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-mono text-cyan-300 tabular-nums">
-                  {s.zone.polygon.length} corners placed
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAddPolygonVertex}
-                    aria-label="Add polygon corner"
-                    className="min-h-[38px] px-3 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/50 text-xs font-bold text-cyan-200 inline-flex items-center gap-1"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Add Corner</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={s.zone.polygon.length <= 3}
-                    onClick={handleRemovePolygonVertex}
-                    aria-label="Remove last polygon corner"
-                    className="min-h-[38px] px-3 rounded-xl bg-[#161926] hover:bg-[#1E2233] border border-white/10 text-xs font-bold text-slate-200 inline-flex items-center gap-1 disabled:opacity-40"
-                  >
-                    <Minus className="w-4 h-4" />
-                    <span>Remove</span>
-                  </button>
-                </div>
-              </div>
-            )}
+            <div className="divide-y divide-white/[0.06] rounded-2xl bg-[#090B12] border border-white/[0.07] overflow-hidden">
+              {room.players.map((p) => {
+                const isSelf = p.id === viewerId;
+                const canTapBot = room.isSoloDemo && p.isBot && !!onCycleBotPreference;
 
-            {/* Instant Map Theme Selector Strip */}
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-xs font-semibold text-slate-400 shrink-0">Map Style</span>
-              <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-[#090A10] border border-white/[0.08] flex-1 max-w-xs">
-                {MAP_THEMES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => patchSettings({ mapTheme: t.id })}
-                    className={`min-h-[34px] rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap ${
-                      s.mapTheme === t.id
-                        ? 'bg-white text-[#08090E]'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
+                const rowContent = (
+                  <>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-[#08090E] shrink-0"
+                        style={{ backgroundColor: p.color }}
+                      >
+                        {getCallsignInitial(p.name)}
+                      </span>
+                      <div className="min-w-0 text-left">
+                        <div className="text-sm font-bold text-white truncate">
+                          {p.name.replace(' (AI)', '')}
+                          {isSelf ? ' (You)' : p.isBot ? ' · Bot' : ''}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {p.isHost ? 'Host · Ready' : p.connected ? 'Ready' : 'Reconnecting'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`text-xs font-bold capitalize px-2.5 py-1 rounded-lg ${
+                          p.preference === 'hunter'
+                            ? 'bg-red-500/15 text-red-300'
+                            : p.preference === 'runner'
+                            ? 'bg-emerald-500/15 text-emerald-300'
+                            : 'bg-white/[0.07] text-slate-200'
+                        }`}
+                      >
+                        {p.preference}
+                      </span>
+                      {!room.isSoloDemo && isHost && !isSelf && (
+                        <button
+                          type="button"
+                          onClick={() => onRemovePlayer(p.id)}
+                          aria-label={`Remove ${p.name}`}
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/15"
+                        >
+                          <UserMinus className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </>
+                );
+
+                if (canTapBot) {
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => onCycleBotPreference?.(p.id)}
+                      className="w-full px-3.5 py-3 flex items-center justify-between gap-2 hover:bg-white/[0.03] transition-colors"
+                    >
+                      {rowContent}
+                    </button>
+                  );
+                }
+
+                return (
+                  <div
+                    key={p.id}
+                    className="px-3.5 py-3 flex items-center justify-between gap-2"
                   >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
+                    {rowContent}
+                  </div>
+                );
+              })}
             </div>
-          </div>
+          </section>
 
-          {/* Live Lobby Players Bar above map so everyone in the lobby is always visible */}
-          <div className="relative z-10 px-4 py-2 bg-[#0B0D14] border-b border-white/[0.07] flex items-center gap-2 overflow-x-auto">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
-              In Lobby ({room.players.length})
+          {/* 6. GET HELP QUICK ROW */}
+          <button
+            type="button"
+            data-testid="lobby-get-help-btn"
+            onClick={onOpenGetHelp}
+            className="w-full min-h-[54px] px-5 rounded-2xl bg-[#10131E] hover:bg-[#161A28] border border-red-500/25 flex items-center justify-between text-sm font-bold text-red-200 transition-colors"
+          >
+            <span className="inline-flex items-center gap-2.5">
+              <ShieldAlert className="w-5 h-5 text-red-400" />
+              <span>Get help</span>
             </span>
-            <div className="flex items-center gap-1.5">
-              {room.players.map((p) => (
-                <span
-                  key={p.id}
-                  className="inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-[#151824] border border-white/[0.08] text-xs font-semibold text-white whitespace-nowrap"
-                >
-                  <span
-                    className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-extrabold text-[#08090E]"
-                    style={{ backgroundColor: p.color }}
-                  >
-                    {getCallsignInitial(p.name)}
-                  </span>
-                  <span>{p.name}</span>
-                </span>
-              ))}
-            </div>
-          </div>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
+          </button>
+        </div>
 
-          <div className="flex-1 relative min-h-[360px] overflow-hidden">
+        {/* Desktop Right Column: Live MapLibre GL JS Zone Preview */}
+        <aside className="hidden lg:flex lg:col-span-6 flex-col rounded-[28px] bg-[#10131E] border border-white/[0.09] overflow-hidden h-[calc(100dvh-160px)] sticky top-20">
+          <div className="px-5 py-3.5 border-b border-white/[0.08] flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-white">Live Play Zone Preview</div>
+              <div className="text-xs text-slate-400">{zoneSummary}</div>
+            </div>
+            {isHost && s.zone.shape !== 'off' && (
+              <button
+                type="button"
+                onClick={() => setShowZoneEditor(true)}
+                className="min-h-[38px] px-3.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 text-xs font-bold text-emerald-300"
+              >
+                Edit Zone
+              </button>
+            )}
+          </div>
+          <div className="flex-1 relative">
             <TacticalMap
               center={s.zone.center || userPos}
-              mapTheme={s.mapTheme}
+              mapTheme={personalMapTheme}
               activeZone={s.zone}
               visibleMarkers={lobbyPlayerMarkers}
               viewerId={viewerId}
               centerLabel={viewer?.name || 'Host'}
               editableZone={isHost}
-              onZoneChange={(nextZone) => patchSettings({ zone: nextZone })}
+              onZoneChange={(nextZone: ActiveZone) => patchSettings({ zone: nextZone })}
               className="absolute inset-0 w-full h-full"
             />
           </div>
-        </section>
+        </aside>
       </main>
 
-      {/* Sticky Bottom Start Bar */}
-      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0A0B12]/92 backdrop-blur-md border-t border-white/[0.08] px-4 py-3 pb-safe">
+      {/* Sticky Bottom Start Game CTA */}
+      <div className="fixed bottom-0 inset-x-0 z-30 bg-[#0A0C13]/94 backdrop-blur-xl border-t border-white/[0.08] px-4 py-3 pb-safe">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <div className="hidden sm:block text-xs text-slate-400">
-            {s.mode.toUpperCase()} · {s.roundLengthMin}m round ·{' '}
+            {activeModeMeta.name} · {formatRoundLength(s.roundLengthMin)} ·{' '}
             {s.headStartMin > 0 ? `${s.headStartMin}m head start` : 'No head start'} ·{' '}
-            {s.pingIntervalMin > 0 ? `${s.pingIntervalMin}m pings` : 'Pings off'} ·{' '}
-            {s.zone.shape === 'circle' ? formatZoneSize(s.zone.diameterMeters, s.units) : s.zone.shape}
+            {s.pingIntervalMin > 0 ? `${s.pingIntervalMin}m pings` : 'Pings off'}
           </div>
           {isHost ? (
             <motion.button
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.985 }}
               type="button"
+              data-testid="lobby-start-game-btn"
               onClick={onStartRound}
-              className="w-full sm:w-auto sm:min-w-[240px] min-h-[50px] px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-[#08090E] font-extrabold text-base inline-flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-colors"
+              className="w-full sm:w-auto sm:min-w-[240px] min-h-[52px] px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-[#08090E] font-extrabold text-base inline-flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-colors"
             >
               <Play className="w-5 h-5 fill-current" />
-              <span>Let&apos;s Go</span>
+              <span>Start game</span>
             </motion.button>
           ) : (
             <div className="w-full sm:w-auto text-center text-sm font-semibold text-slate-300 py-2">
@@ -903,6 +973,52 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Bottom Sheets & Full-Screen Play Zone Editor */}
+      <AnimatePresence>
+        {showModeSheet && (
+          <ModePickerSheet
+            selectedMode={s.mode}
+            canEdit={isHost}
+            onSelectMode={(mode) => patchSettings({ mode })}
+            onOpenHowToPlay={onOpenHowToPlay}
+            onClose={() => setShowModeSheet(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showMapSheet && (
+          <MapPickerSheet
+            selectedTheme={personalMapTheme}
+            onSelectTheme={onChangePersonalMapTheme}
+            onClose={() => setShowMapSheet(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showZoneEditor && (
+          <PlayZoneEditorSheet
+            initialZone={s.zone}
+            initialShrinkEnabled={s.zoneShrinkEnabled}
+            initialFinalDiameterMeters={s.finalZoneDiameterMeters}
+            roundLengthMin={s.roundLengthMin}
+            units={s.units}
+            mapTheme={personalMapTheme}
+            userPos={userPos}
+            onChangeMapTheme={onChangePersonalMapTheme}
+            onSave={(nextZone, nextShrink, nextFinal) =>
+              patchSettings({
+                zone: nextZone,
+                zoneShrinkEnabled: nextShrink,
+                finalZoneDiameterMeters: nextFinal,
+              })
+            }
+            onClose={() => setShowZoneEditor(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

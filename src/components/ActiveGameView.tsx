@@ -7,6 +7,7 @@ import {
   EyeOff,
   Flashlight,
   Map as MapIcon,
+  Moon,
   MoreHorizontal,
   Radio,
   ShieldAlert,
@@ -15,7 +16,7 @@ import {
   Volume2,
   WifiOff,
 } from 'lucide-react';
-import type { ChatMessage, ChatScope, LatLng, RoomState } from '../types/game';
+import type { ChatMessage, ChatScope, LatLng, MapTheme, RoomState } from '../types/game';
 import { evaluateOobState, filterVisiblePlayers } from '../game/rules';
 import { formatCountdown, formatZoneSize } from '../game/geo';
 import {
@@ -33,6 +34,7 @@ interface ActiveGameViewProps {
   room: RoomState;
   viewerId: string;
   userPos: LatLng;
+  personalMapTheme: MapTheme;
   nowMs: number;
   isOnline: boolean;
   offlineQueueCount: number;
@@ -57,6 +59,7 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
   room,
   viewerId,
   userPos,
+  personalMapTheme,
   nowMs,
   isOnline,
   offlineQueueCount,
@@ -80,6 +83,8 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
   const [flashlightMode, setFlashlightMode] = useState<'off' | 'hardware' | 'screen'>('off');
   const [recenterSignal, setRecenterSignal] = useState(0);
   const [revealSecretRole, setRevealSecretRole] = useState(false);
+  const [holdingPtt, setHoldingPtt] = useState(false);
+  const pttTimerRef = useRef<number | null>(null);
 
   const prevTabRef = useRef<'map' | 'radio'>('map');
 
@@ -211,10 +216,10 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-[#08090E] select-none">
-      {/* Full-Bleed Tactical Map */}
+      {/* Full-Bleed MapLibre GL JS Tactical Map */}
       <TacticalMap
         center={viewer?.lastPos ?? userPos}
-        mapTheme={room.settings.mapTheme}
+        mapTheme={personalMapTheme}
         activeZone={room.currentZone}
         nextZonePreview={room.settings.zoneShrinkEnabled ? room.nextZonePreview : null}
         visibleMarkers={visibleMarkers}
@@ -411,6 +416,15 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                   <motion.button
                     whileTap={{ scale: 0.9 }}
                     type="button"
+                    onClick={() => onSetPocketMode(true)}
+                    aria-label="Enable Pocket Battery-Saver Mode"
+                    className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#0B0E17]/92 border border-emerald-500/25 text-white hover:bg-[#141A29] backdrop-blur-xl shadow-xl flex items-center justify-center transition-colors"
+                  >
+                    <Moon className="w-5 h-5 text-emerald-300" />
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    type="button"
                     onClick={handleToggleFlashlight}
                     aria-label={
                       flashlightMode === 'off' ? 'Turn on Flashlight' : 'Turn off Flashlight'
@@ -444,6 +458,53 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                     ) : (
                       <Volume2 className="w-5 h-5" />
                     )}
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.92 }}
+                    type="button"
+                    aria-label="Hold to send quick team radio check-in"
+                    onPointerDown={() => {
+                      setHoldingPtt(true);
+                      if (pttTimerRef.current) window.clearTimeout(pttTimerRef.current);
+                      pttTimerRef.current = window.setTimeout(() => {
+                        const scope: ChatScope =
+                          role === 'hunter' && room.settings.huntersCanTalk === false
+                            ? 'global'
+                            : 'team';
+                        onSendText(
+                          scope,
+                          role === 'hunter' ? 'Radio check — sweeping sector.' : 'Radio check — staying low.'
+                        );
+                        setHoldingPtt(false);
+                      }, 550);
+                    }}
+                    onPointerUp={() => {
+                      if (pttTimerRef.current) {
+                        window.clearTimeout(pttTimerRef.current);
+                        pttTimerRef.current = null;
+                      }
+                      setHoldingPtt(false);
+                    }}
+                    onPointerCancel={() => {
+                      if (pttTimerRef.current) {
+                        window.clearTimeout(pttTimerRef.current);
+                        pttTimerRef.current = null;
+                      }
+                      setHoldingPtt(false);
+                    }}
+                    className={`fk-ptt-btn relative w-11 h-11 sm:w-12 sm:h-12 rounded-full backdrop-blur-xl border shadow-xl flex items-center justify-center transition-colors ${
+                      holdingPtt
+                        ? 'bg-emerald-500 border-emerald-200 text-[#08090E]'
+                        : 'bg-[#0B0E17]/92 border-emerald-500/25 text-emerald-300 hover:bg-[#141A29]'
+                    }`}
+                  >
+                    {holdingPtt && (
+                      <span
+                        aria-hidden="true"
+                        className="fk-radio-ring absolute inset-0 rounded-full border-2 border-emerald-400"
+                      />
+                    )}
+                    <Radio className="w-5 h-5" />
                   </motion.button>
                 </div>
               </div>

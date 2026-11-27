@@ -278,29 +278,38 @@ export const RadioView: React.FC<RadioViewProps> = ({
             ))}
           </div>
 
-          {/* Text-Only Radio Composer */}
-          <form onSubmit={handleSubmitText} className="flex items-center gap-2.5">
-            <input
-              data-testid="chat-text-input"
-              type="text"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              maxLength={240}
-              placeholder={
-                activeScope === 'team' ? 'Message your team' : 'Message everyone on global'
-              }
-              className="flex-1 min-w-0 min-h-[46px] px-4 rounded-full bg-[#121624] border border-white/[0.1] text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
-            />
-            <button
-              data-testid="chat-send-btn"
-              type="submit"
-              disabled={!draft.trim()}
-              aria-label="Send radio message"
-              className="w-11 h-11 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-[#08090E] flex items-center justify-center shrink-0 transition-colors"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </form>
+          {/* Text-Only Radio Composer (respects Hunters Can Talk house rule) */}
+          {activeScope === 'team' &&
+          viewer?.role === 'hunter' &&
+          room.settings.huntersCanTalk === false &&
+          room.phase !== 'lobby' ? (
+            <div className="min-h-[46px] px-4 rounded-2xl bg-[#121624] border border-white/[0.08] flex items-center justify-center text-xs font-semibold text-slate-400">
+              Hunter team radio is turned off in House Rules. Switch to Global to message everyone.
+            </div>
+          ) : (
+            <form onSubmit={handleSubmitText} className="flex items-center gap-2.5">
+              <input
+                data-testid="chat-text-input"
+                type="text"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                maxLength={240}
+                placeholder={
+                  activeScope === 'team' ? 'Message your team' : 'Message everyone on global'
+                }
+                className="flex-1 min-w-0 min-h-[46px] px-4 rounded-full bg-[#121624] border border-white/[0.1] text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
+              />
+              <button
+                data-testid="chat-send-btn"
+                type="submit"
+                disabled={!draft.trim()}
+                aria-label="Send radio message"
+                className="w-11 h-11 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-[#08090E] flex items-center justify-center shrink-0 transition-colors"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </motion.div>

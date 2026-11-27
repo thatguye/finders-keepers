@@ -90,9 +90,81 @@ export function polygonCentroid(polygon: LatLng[]): LatLng {
   };
 }
 
-export function createDefaultPolygonAround(center: LatLng, radiusMeters = 450): LatLng[] {
-  const bearings = [35, 115, 200, 290];
-  return bearings.map((b) => movePointByBearing(center, radiusMeters, b));
+export function createDefaultPolygonAround(center: LatLng, radiusMeters = 450, corners = 5): LatLng[] {
+  const count = Math.max(3, Math.min(12, Math.round(corners)));
+  return Array.from({ length: count }, (_, i) => {
+    const bearing = (i * 360) / count + 24;
+    return movePointByBearing(center, radiusMeters, bearing);
+  });
+}
+
+/**
+ * Generates a smooth closed GeoJSON ring (array of [lng, lat] pairs) approximating a circle.
+ * Used by MapLibre GL JS fill & line layers for crisp 60fps vector zone rendering.
+ */
+export function createCirclePolygon(
+  center: LatLng,
+  diameterMeters: number,
+  steps = 64
+): [number, number][] {
+  const radius = Math.max(25, diameterMeters / 2);
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const bearing = (i * 360) / steps;
+    const pt = movePointByBearing(center, radius, bearing);
+    ring.push([pt.lng, pt.lat]);
+  }
+  return ring;
+}
+
+/** Translates every vertex of a polygon by a delta latitude/longitude */
+export function translatePolygon(polygon: LatLng[], dLat: number, dLng: number): LatLng[] {
+  return polygon.map((pt) => ({
+    lat: roundCoord(pt.lat + dLat),
+    lng: roundCoord(pt.lng + dLng),
+  }));
+}
+
+/** Adds or removes corners cleanly from a drawn polygon while preserving shape */
+export function resizePolygonCornerCount(
+  polygon: LatLng[],
+  center: LatLng,
+  targetCount: number
+): LatLng[] {
+  const clamped = Math.max(3, Math.min(12, Math.round(targetCount)));
+  if (polygon.length < 3) {
+    return createDefaultPolygonAround(center, 450, clamped);
+  }
+  if (clamped === polygon.length) return polygon;
+  if (clamped < polygon.length) {
+    return polygon.slice(0, clamped);
+  }
+  const next = [...polygon];
+  while (next.length < clamped) {
+    // Find longest edge and insert a midpoint slightly pushed outward from centroid
+    let longestIdx = 0;
+    let longestDist = -1;
+    for (let i = 0; i < next.length; i++) {
+      const a = next[i];
+      const b = next[(i + 1) % next.length];
+      const d = haversineMeters(a, b);
+      if (d > longestDist) {
+        longestDist = d;
+        longestIdx = i;
+      }
+    }
+    const a = next[longestIdx];
+    const b = next[(longestIdx + 1) % next.length];
+    const c = polygonCentroid(next);
+    const midLat = (a.lat + b.lat) / 2;
+    const midLng = (a.lng + b.lng) / 2;
+    const pushed: LatLng = {
+      lat: roundCoord(midLat + (midLat - c.lat) * 0.12),
+      lng: roundCoord(midLng + (midLng - c.lng) * 0.12),
+    };
+    next.splice(longestIdx + 1, 0, pushed);
+  }
+  return next;
 }
 
 export function scalePolygonAroundAnchor(

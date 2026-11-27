@@ -10,7 +10,7 @@ import {
   Share2,
   Trophy,
 } from 'lucide-react';
-import type { BadgeId, RoomState, ScoreBreakdown } from '../types/game';
+import type { BadgeId, MapTheme, RoomState, ScoreBreakdown } from '../types/game';
 import { formatDistance } from '../game/geo';
 import { BADGE_DEFINITIONS } from '../game/rules';
 import { renderStoryPoster, shareOrDownloadPoster } from '../services/poster';
@@ -19,6 +19,7 @@ import { TacticalMap } from './TacticalMap';
 interface PostRoundViewProps {
   room: RoomState;
   scores: ScoreBreakdown[];
+  personalMapTheme?: MapTheme;
   newlyUnlockedBadges: BadgeId[];
   allProfileBadges: BadgeId[];
   onPlayAgain: () => void;
@@ -29,6 +30,7 @@ interface PostRoundViewProps {
 export const PostRoundView: React.FC<PostRoundViewProps> = ({
   room,
   scores,
+  personalMapTheme,
   newlyUnlockedBadges,
   allProfileBadges,
   onPlayAgain,
@@ -148,7 +150,7 @@ export const PostRoundView: React.FC<PostRoundViewProps> = ({
               <div className="h-[360px] sm:h-[420px] relative">
                 <TacticalMap
                   center={room.currentZone.center}
-                  mapTheme={room.settings.mapTheme}
+                  mapTheme={personalMapTheme ?? room.settings.mapTheme}
                   activeZone={room.currentZone}
                   showTrailsForPlayers={room.players}
                 />
@@ -238,7 +240,7 @@ export const PostRoundView: React.FC<PostRoundViewProps> = ({
                         <span className="text-slate-200">
                           <strong className="text-white">{t.taggedName}</strong>{' '}
                           {t.reason === 'oob_timeout'
-                            ? 'eliminated (2m out of bounds)'
+                            ? 'eliminated (30s out of bounds)'
                             : t.reason === 'voted_out'
                             ? 'voted out in Emergency Meeting'
                             : t.taggerName

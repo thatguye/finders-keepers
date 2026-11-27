@@ -396,3 +396,53 @@ test('shouldShowRoleReveal gates on random preference and resolveReleaseTimestam
   assert.ok(formatted.includes('·') && /\d{1,2}:\d{2}/.test(formatted), `Expected real date & time, got ${formatted}`);
 });
 
+test('MapLibre GeoJSON polygon circle, translation, and corner resizing work accurately', async () => {
+  const { createCirclePolygon, translatePolygon, resizePolygonCornerCount } = await import('./geo');
+  const ring = createCirclePolygon(DEFAULT_COORDS, 1000, 32);
+  assert.equal(ring.length, 33);
+  assert.deepEqual(ring[0], ring[32]);
+  const distFromCenter = haversineMeters(DEFAULT_COORDS, { lat: ring[0][1], lng: ring[0][0] });
+  assert.ok(Math.abs(distFromCenter - 500) < 8, `Expected ~500m radius, got ${distFromCenter}`);
+
+  const poly = createDefaultPolygonAround(DEFAULT_COORDS, 400, 5);
+  assert.equal(poly.length, 5);
+  const shifted = translatePolygon(poly, 0.001, -0.002);
+  assert.ok(Math.abs(shifted[0].lat - (poly[0].lat + 0.001)) < 1e-4);
+  assert.ok(Math.abs(shifted[0].lng - (poly[0].lng - 0.002)) < 1e-4);
+
+  const grown = resizePolygonCornerCount(poly, DEFAULT_COORDS, 7);
+  assert.equal(grown.length, 7);
+  const shrunk = resizePolygonCornerCount(grown, DEFAULT_COORDS, 4);
+  assert.equal(shrunk.length, 4);
+});
+
+test('custom room code formatting, GPS accuracy label, team preference cycling, and demo lobby work', async () => {
+  const { formatRoomCodeInput, formatAccuracyLabel, cycleTeamPreference } = await import('./rules');
+  const { createSoloDemoLobby } = await import('./bots');
+
+  assert.equal(formatRoomCodeInput('  ab-12!cd99 '), 'AB12CD');
+  assert.equal(formatAccuracyLabel(20, 'mi'), 'Accurate to about 65 ft');
+  assert.equal(formatAccuracyLabel(20, 'km'), 'Accurate to about 20 m');
+  assert.equal(formatAccuracyLabel(null, 'mi'), 'GPS signal locked');
+
+  assert.equal(cycleTeamPreference('hunter'), 'runner');
+  assert.equal(cycleTeamPreference('runner'), 'random');
+  assert.equal(cycleTeamPreference('random'), 'hunter');
+
+  const demoLobby = createSoloDemoLobby('u1', 'Alex', DEFAULT_COORDS, '#06B6D4', 'standard', 5000);
+  assert.equal(demoLobby.phase, 'lobby');
+  assert.equal(demoLobby.isSoloDemo, true);
+  assert.equal(demoLobby.players.length, 6);
+  assert.equal(demoLobby.settings.mapTheme, 'standard');
+  assert.equal(demoLobby.players[0].color, '#06B6D4');
+});
+
+test('shouldShowSplashOnLaunch honors normal timing, reduced motion, and ?autostart=1 bypass', async () => {
+  const { shouldShowSplashOnLaunch } = await import('./rules');
+
+  assert.deepEqual(shouldShowSplashOnLaunch('', false), { show: true, durationMs: 2250 });
+  assert.deepEqual(shouldShowSplashOnLaunch('', true), { show: true, durationMs: 800 });
+  assert.deepEqual(shouldShowSplashOnLaunch('?code=ABC123', false), { show: true, durationMs: 2250 });
+  assert.deepEqual(shouldShowSplashOnLaunch('?autostart=1', false), { show: false, durationMs: 0 });
+  assert.deepEqual(shouldShowSplashOnLaunch('?code=ABC123&autostart=1', true), { show: false, durationMs: 0 });
+});

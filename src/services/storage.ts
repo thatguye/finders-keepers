@@ -27,6 +27,13 @@ function makePlayerId(): string {
   return `p_${Math.random().toString(36).slice(2, 12)}`;
 }
 
+export const DEFAULT_PLAYER_LOOKS = {
+  dotColor: '#10B981',
+  trailStyle: 'solid' as const,
+  nameColor: '#F4F5F9',
+  title: 'Field Agent',
+};
+
 export function loadCareerProfile(): CareerProfile {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
@@ -35,6 +42,16 @@ export function loadCareerProfile(): CareerProfile {
       if (parsed && parsed.playerId) {
         return {
           ...parsed,
+          username: parsed.username ?? '',
+          neverCaughtCount: parsed.neverCaughtCount ?? 0,
+          bestEscapeMinutes: parsed.bestEscapeMinutes ?? 0,
+          longestRoundMeters: parsed.longestRoundMeters ?? 0,
+          leaderboardOptIn: parsed.leaderboardOptIn ?? false,
+          preferredMapTheme: parsed.preferredMapTheme ?? 'night',
+          looks: {
+            ...DEFAULT_PLAYER_LOOKS,
+            ...(parsed.looks ?? {}),
+          },
           badges: Array.isArray(parsed.badges) ? parsed.badges : [],
           leaderboard: Array.isArray(parsed.leaderboard) ? parsed.leaderboard : [],
         };
@@ -46,12 +63,19 @@ export function loadCareerProfile(): CareerProfile {
   const fresh: CareerProfile = {
     playerId: makePlayerId(),
     name: '',
+    username: '',
     roundsPlayed: 0,
     wins: 0,
     tags: 0,
     cleanSweeps: 0,
+    neverCaughtCount: 0,
+    bestEscapeMinutes: 0,
+    longestRoundMeters: 0,
     totalDistanceMeters: 0,
     totalPoints: 0,
+    leaderboardOptIn: false,
+    preferredMapTheme: 'night',
+    looks: { ...DEFAULT_PLAYER_LOOKS },
     badges: [],
     leaderboard: [],
   };
@@ -112,13 +136,19 @@ export function recordCompletedRound(
     .sort((a, b) => b.totalPoints - a.totalPoints)
     .slice(0, 25);
 
+  const mySurvival = myScore?.initialRole === 'runner' ? myScore.survivalMinutes : 0;
+  const myDist = myScore?.distanceMeters ?? 0;
+
   const tentative: CareerProfile = {
     ...profile,
     roundsPlayed: profile.roundsPlayed + 1,
     wins: profile.wins + (didWin ? 1 : 0),
     tags: profile.tags + (myScore?.tagsCount ?? 0),
     cleanSweeps: profile.cleanSweeps + (myScore?.cleanSweepBonus ? 1 : 0),
-    totalDistanceMeters: profile.totalDistanceMeters + (myScore?.distanceMeters ?? 0),
+    neverCaughtCount: (profile.neverCaughtCount ?? 0) + (myScore?.survivedAll ? 1 : 0),
+    bestEscapeMinutes: Math.max(profile.bestEscapeMinutes ?? 0, mySurvival),
+    longestRoundMeters: Math.max(profile.longestRoundMeters ?? 0, myDist),
+    totalDistanceMeters: profile.totalDistanceMeters + myDist,
     totalPoints: profile.totalPoints + (myScore?.points ?? 0),
     leaderboard,
   };
