@@ -122,19 +122,27 @@ export const MapPickerSheet: React.FC<MapPickerSheetProps> = ({
         {/* Horizontal Swipeable Map Style Cards */}
         <div
           data-testid="map-theme-carousel"
-          className="flex gap-3.5 overflow-x-auto snap-x snap-mandatory px-5 py-3 no-scrollbar"
+          className="flex gap-3.5 overflow-x-auto snap-x snap-mandatory scroll-px-5 px-5 py-3 no-scrollbar"
         >
           {MAP_THEME_OPTIONS.map((t) => {
             const active = selectedTheme === t.id;
             return (
               <motion.button
                 key={t.id}
+                data-map-card={t.id}
                 whileTap={{ scale: 0.97 }}
                 type="button"
-                onClick={() => onSelectTheme(t.id)}
+                onClick={(e) => {
+                  onSelectTheme(t.id);
+                  e.currentTarget.scrollIntoView({
+                    behavior: 'smooth',
+                    inline: 'center',
+                    block: 'nearest',
+                  });
+                }}
                 className={`relative snap-center shrink-0 w-[216px] sm:w-[230px] rounded-[24px] overflow-hidden text-left border-2 transition-all bg-[#0B0E17] ${
                   active
-                    ? 'border-emerald-400 shadow-[0_12px_36px_rgba(16,185,129,0.22)]'
+                    ? 'border-emerald-400 ring-1 ring-emerald-400/50 shadow-[0_12px_36px_rgba(16,185,129,0.28)]'
                     : 'border-white/[0.1] hover:border-white/25'
                 }`}
               >
@@ -211,6 +219,40 @@ export const MapPickerSheet: React.FC<MapPickerSheetProps> = ({
                   <p className="text-xs text-slate-400 mt-1.5 leading-snug">{t.subtitle}</p>
                 </div>
               </motion.button>
+            );
+          })}
+        </div>
+
+        {/* Map Style Dots */}
+        <div
+          data-testid="map-carousel-dots"
+          className="flex items-center justify-center gap-1.5 pb-1"
+        >
+          {MAP_THEME_OPTIONS.map((t) => {
+            const isSelected = selectedTheme === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                aria-label={`Select ${t.name} map style`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  onSelectTheme(t.id);
+                  const card = document.querySelector(`[data-map-card="${t.id}"]`);
+                  card?.scrollIntoView({
+                    behavior: 'smooth',
+                    inline: 'center',
+                    block: 'nearest',
+                  });
+                }}
+                className="p-1.5 -m-1 flex items-center justify-center"
+              >
+                <span
+                  className={`block h-1.5 rounded-full transition-all ${
+                    isSelected ? 'w-5 bg-emerald-400' : 'w-1.5 bg-white/25'
+                  }`}
+                />
+              </button>
             );
           })}
         </div>

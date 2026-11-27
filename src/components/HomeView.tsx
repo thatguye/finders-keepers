@@ -756,27 +756,29 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </nav>
       </div>
 
-      {/* Join With Code Bottom Sheet */}
+      {/* Join With Code Centered Modal (stays cleanly above mobile keyboard) */}
       <AnimatePresence>
         {showJoinSheet && (
           <motion.div
+            data-testid="join-code-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
+            transition={{ duration: 0.16 }}
+            className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 pb-[12vh] sm:pb-4 overflow-y-auto"
             onClick={() => setShowJoinSheet(false)}
             role="dialog"
             aria-modal="true"
             aria-label="Join game with code"
           >
             <motion.form
-              initial={{ y: 36, opacity: 0.92 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 36, opacity: 0 }}
+              initial={{ scale: 0.94, y: 12, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, y: 8, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 420, damping: 32 }}
               onClick={(e) => e.stopPropagation()}
               onSubmit={handleJoinSubmit}
-              className="w-full max-w-md rounded-t-[28px] sm:rounded-[28px] bg-[#0E111A] border-t sm:border border-white/[0.1] p-6 pb-safe shadow-2xl space-y-5"
+              className="w-full max-w-md my-auto rounded-[28px] bg-[#0E111A] border border-white/[0.12] p-5 sm:p-6 shadow-2xl space-y-4"
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -791,7 +793,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   type="button"
                   onClick={() => setShowJoinSheet(false)}
                   aria-label="Close join dialog"
-                  className="min-h-[44px] min-w-[44px] rounded-full bg-white/[0.06] flex items-center justify-center text-slate-300"
+                  className="min-h-[44px] min-w-[44px] rounded-full bg-white/[0.06] hover:bg-white/[0.12] flex items-center justify-center text-slate-300"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -815,7 +817,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       onUpdateProfile({ name: e.target.value });
                     }}
                     placeholder="Enter your name"
-                    className="w-full min-h-[48px] px-4 rounded-xl bg-[#08090E] border border-white/10 text-sm font-semibold text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
+                    className="w-full min-h-[46px] px-4 rounded-xl bg-[#08090E] border border-white/10 text-sm font-semibold text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
                   />
                 </div>
 
@@ -837,7 +839,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       setJoinError(null);
                     }}
                     placeholder="FK84XP"
-                    className="w-full min-h-[56px] px-4 rounded-xl bg-[#08090E] border border-white/10 font-mono text-2xl font-extrabold tracking-[0.26em] text-center text-emerald-400 placeholder:text-slate-600 focus:outline-none focus:border-emerald-400 uppercase"
+                    className="w-full min-h-[54px] px-4 rounded-xl bg-[#08090E] border border-white/10 font-mono text-2xl font-extrabold tracking-[0.26em] text-center text-emerald-400 placeholder:text-slate-600 focus:outline-none focus:border-emerald-400 uppercase"
                   />
                 </div>
 
@@ -851,7 +853,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <button
                 type="submit"
                 disabled={joining}
-                className="w-full min-h-[54px] rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#08090E] font-extrabold text-base inline-flex items-center justify-center gap-2 transition-colors"
+                className="w-full min-h-[52px] rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#08090E] font-extrabold text-base inline-flex items-center justify-center gap-2 transition-colors"
               >
                 <span>{joining ? 'Joining...' : 'Join Lobby'}</span>
                 <ArrowRight className="w-4 h-4" />

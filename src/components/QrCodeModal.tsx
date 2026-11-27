@@ -46,12 +46,16 @@ export const QrCodeModal: React.FC<QrCodeModalProps> = ({ roomCode, inviteUrl, o
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Room Invite QR Code"
     >
-      <div className="w-full max-w-sm rounded-2xl bg-[#12141E] border border-[#282D40] p-6 shadow-2xl">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl bg-[#12141E] border border-[#282D40] p-6 shadow-2xl"
+      >
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-lg font-bold text-white">Scan to Join</h3>

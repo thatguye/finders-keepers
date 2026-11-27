@@ -5,7 +5,7 @@ import type { GameMode } from '../types/game';
 import classicArt from '../assets/images/mode_classic_1795813417735.jpg';
 import infectionArt from '../assets/images/mode_infection_1795813420496.jpg';
 import curfewArt from '../assets/images/mode_curfew_1795813420830.jpg';
-import imposterArt from '../assets/images/mode_imposter_1795813420317.jpg';
+import imposterArt from '../assets/images/mode_imposter_art_1795817065441.jpg';
 
 export interface ModeMeta {
   id: GameMode;
@@ -114,29 +114,37 @@ export const ModePickerSheet: React.FC<ModePickerSheetProps> = ({
         {/* Horizontal Swipeable Mode Carousel */}
         <div
           data-testid="mode-carousel"
-          className="flex gap-3.5 overflow-x-auto snap-x snap-mandatory px-5 py-3 no-scrollbar"
+          className="flex gap-3.5 overflow-x-auto snap-x snap-mandatory scroll-px-5 px-5 py-3 no-scrollbar"
         >
           {GAME_MODES.map((m) => {
             const active = selectedMode === m.id;
             return (
               <motion.button
                 key={m.id}
+                data-mode-card={m.id}
                 whileTap={{ scale: 0.97 }}
                 type="button"
                 disabled={!canEdit}
-                onClick={() => onSelectMode(m.id)}
+                onClick={(e) => {
+                  onSelectMode(m.id);
+                  e.currentTarget.scrollIntoView({
+                    behavior: 'smooth',
+                    inline: 'center',
+                    block: 'nearest',
+                  });
+                }}
                 className={`relative snap-center shrink-0 w-[230px] sm:w-[248px] aspect-[3/4] rounded-[24px] overflow-hidden text-left border-2 transition-all bg-[#08090E] ${
                   active
-                    ? 'border-emerald-400 shadow-[0_12px_36px_rgba(16,185,129,0.22)]'
-                    : 'border-white/[0.1] hover:border-white/25 opacity-85 hover:opacity-100'
+                    ? 'border-emerald-400 ring-1 ring-emerald-400/50 shadow-[0_12px_36px_rgba(16,185,129,0.28)]'
+                    : 'border-white/[0.1] hover:border-white/25 opacity-90 hover:opacity-100'
                 }`}
               >
                 <img
                   src={m.art}
                   alt={`${m.name} mode tactical illustration`}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-cover object-top"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#08090E] via-[#08090E]/55 to-black/15" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#08090E] via-[#08090E]/45 to-transparent" />
 
                 {/* Selection Checkmark */}
                 {active && (
@@ -153,6 +161,40 @@ export const ModePickerSheet: React.FC<ModePickerSheetProps> = ({
                   <p className="text-xs text-slate-300 leading-snug">{m.shortDesc}</p>
                 </div>
               </motion.button>
+            );
+          })}
+        </div>
+
+        {/* Mode Quick Dots */}
+        <div
+          data-testid="mode-carousel-dots"
+          className="flex items-center justify-center gap-1.5 pb-1"
+        >
+          {GAME_MODES.map((m) => {
+            const isSelected = selectedMode === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                aria-label={`Select ${m.name} mode`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  if (canEdit) onSelectMode(m.id);
+                  const card = document.querySelector(`[data-mode-card="${m.id}"]`);
+                  card?.scrollIntoView({
+                    behavior: 'smooth',
+                    inline: 'center',
+                    block: 'nearest',
+                  });
+                }}
+                className="p-1.5 -m-1 flex items-center justify-center"
+              >
+                <span
+                  className={`block h-1.5 rounded-full transition-all ${
+                    isSelected ? 'w-5 bg-emerald-400' : 'w-1.5 bg-white/25'
+                  }`}
+                />
+              </button>
             );
           })}
         </div>

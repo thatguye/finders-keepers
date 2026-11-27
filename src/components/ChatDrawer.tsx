@@ -68,6 +68,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4"
+          onClick={onClose}
           role="dialog"
           aria-modal="true"
           aria-label="Team and Global Radio"
@@ -78,6 +79,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 28, scale: 0.98 }}
             transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            onClick={(e) => e.stopPropagation()}
             className="w-full sm:max-w-md h-[78dvh] sm:h-[620px] flex flex-col rounded-t-3xl sm:rounded-3xl bg-[#0D1019] border-t sm:border border-emerald-500/20 shadow-2xl overflow-hidden"
           >
             {/* Header & Scope Switcher */}

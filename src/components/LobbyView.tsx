@@ -214,9 +214,9 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       <header className="sticky top-0 z-30 border-b border-white/[0.07] bg-[#0A0C13]/92 backdrop-blur-xl pt-safe">
         <div
           data-testid="lobby-header-bar"
-          className="max-w-7xl mx-auto px-3 sm:px-6 h-15 flex items-center justify-between gap-2"
+          className="relative max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2"
         >
-          <div className="flex items-center gap-1 min-w-0">
+          <div className="flex items-center gap-1 min-w-0 z-10">
             <button
               type="button"
               onClick={onLeaveLobby}
@@ -228,16 +228,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             </button>
           </div>
 
-          <h1 className="font-display text-2xl font-extrabold tracking-wide text-white leading-none">
+          <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 font-display text-[22px] sm:text-2xl font-extrabold tracking-wide text-white leading-none text-center whitespace-nowrap">
             {room.isSoloDemo ? 'Demo Lobby' : 'Lobby'}
           </h1>
 
-          <div data-testid="lobby-header-actions" className="flex items-center gap-1.5 shrink-0">
+          <div data-testid="lobby-header-actions" className="flex items-center gap-1.5 shrink-0 z-10">
             <button
               type="button"
               onClick={onShowQr}
               aria-label="Show QR Code"
-              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
+              className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
             >
               <QrCode className="w-4 h-4" />
             </button>
@@ -245,7 +245,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               type="button"
               onClick={onOpenChat}
               aria-label="Open Lobby Radio"
-              className="relative min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
+              className="relative h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-emerald-400"
             >
               <Radio className="w-4 h-4" />
               {unreadChatCount > 0 && (
@@ -258,7 +258,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               type="button"
               onClick={onOpenMoreMenu}
               aria-label="More options"
-              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-white"
+              className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-[#151824] hover:bg-[#1E2334] border border-white/[0.09] flex items-center justify-center text-white"
             >
               <MoreHorizontal className="w-5 h-5" />
             </button>
@@ -281,7 +281,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 </div>
 
                 {editingCode ? (
-                  <form onSubmit={handleCommitCode} className="mt-2 flex items-center gap-2">
+                  <form onSubmit={handleCommitCode} className="mt-2 flex flex-wrap items-center gap-2">
                     <input
                       data-testid="custom-code-input"
                       type="text"
@@ -289,7 +289,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                       autoFocus
                       value={codeDraft}
                       onChange={(e) => setCodeDraft(formatRoomCodeInput(e.target.value))}
-                      className="w-36 min-h-[42px] px-3 rounded-xl bg-[#08090E] border border-emerald-400 font-mono text-xl font-extrabold tracking-[0.18em] text-emerald-300 uppercase focus:outline-none"
+                      className="flex-1 min-w-[128px] max-w-[164px] min-h-[42px] px-3 rounded-xl bg-[#08090E] border border-emerald-400 font-mono text-xl font-extrabold tracking-[0.18em] text-emerald-300 uppercase focus:outline-none"
                     />
                     <button
                       type="submit"

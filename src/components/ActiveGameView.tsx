@@ -83,8 +83,6 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
   const [flashlightMode, setFlashlightMode] = useState<'off' | 'hardware' | 'screen'>('off');
   const [recenterSignal, setRecenterSignal] = useState(0);
   const [revealSecretRole, setRevealSecretRole] = useState(false);
-  const [holdingPtt, setHoldingPtt] = useState(false);
-  const pttTimerRef = useRef<number | null>(null);
 
   const prevTabRef = useRef<'map' | 'radio'>('map');
 
@@ -149,11 +147,11 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
 
   const zoneSubtext =
     room.currentZone.shape === 'circle'
-      ? `${formatZoneSize(room.currentZone.diameterMeters, room.settings.units)} across${
-          shrinkMs !== null ? ` · shrinks in ${formatCountdown(shrinkMs)}` : ''
+      ? `${formatZoneSize(room.currentZone.diameterMeters, room.settings.units)}${
+          shrinkMs !== null ? ` · shrinks ${formatCountdown(shrinkMs)}` : ' across'
         }`
       : room.currentZone.shape === 'polygon'
-      ? `Custom polygon${shrinkMs !== null ? ` · shrinks in ${formatCountdown(shrinkMs)}` : ''}`
+      ? `Custom zone${shrinkMs !== null ? ` · shrinks ${formatCountdown(shrinkMs)}` : ''}`
       : 'Open world · no boundary';
 
   const leftMetricLabel =
@@ -458,53 +456,6 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                     ) : (
                       <Volume2 className="w-5 h-5" />
                     )}
-                  </motion.button>
-                  <motion.button
-                    whileTap={{ scale: 0.92 }}
-                    type="button"
-                    aria-label="Hold to send quick team radio check-in"
-                    onPointerDown={() => {
-                      setHoldingPtt(true);
-                      if (pttTimerRef.current) window.clearTimeout(pttTimerRef.current);
-                      pttTimerRef.current = window.setTimeout(() => {
-                        const scope: ChatScope =
-                          role === 'hunter' && room.settings.huntersCanTalk === false
-                            ? 'global'
-                            : 'team';
-                        onSendText(
-                          scope,
-                          role === 'hunter' ? 'Radio check — sweeping sector.' : 'Radio check — staying low.'
-                        );
-                        setHoldingPtt(false);
-                      }, 550);
-                    }}
-                    onPointerUp={() => {
-                      if (pttTimerRef.current) {
-                        window.clearTimeout(pttTimerRef.current);
-                        pttTimerRef.current = null;
-                      }
-                      setHoldingPtt(false);
-                    }}
-                    onPointerCancel={() => {
-                      if (pttTimerRef.current) {
-                        window.clearTimeout(pttTimerRef.current);
-                        pttTimerRef.current = null;
-                      }
-                      setHoldingPtt(false);
-                    }}
-                    className={`fk-ptt-btn relative w-11 h-11 sm:w-12 sm:h-12 rounded-full backdrop-blur-xl border shadow-xl flex items-center justify-center transition-colors ${
-                      holdingPtt
-                        ? 'bg-emerald-500 border-emerald-200 text-[#08090E]'
-                        : 'bg-[#0B0E17]/92 border-emerald-500/25 text-emerald-300 hover:bg-[#141A29]'
-                    }`}
-                  >
-                    {holdingPtt && (
-                      <span
-                        aria-hidden="true"
-                        className="fk-radio-ring absolute inset-0 rounded-full border-2 border-emerald-400"
-                      />
-                    )}
-                    <Radio className="w-5 h-5" />
                   </motion.button>
                 </div>
               </div>
