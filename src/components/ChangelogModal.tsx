@@ -9,80 +9,111 @@ interface ChangelogModalProps {
 
 interface ReleaseDefinition {
   version: string;
-  offsetMinutesAgo: number;
+  releasedAt: string;
   title: string;
   highlights: string[];
 }
 
-const STORAGE_KEY = 'fk_changelog_timestamps_v3';
+export const LATEST_APP_VERSION = '2.3';
+
+const STORAGE_KEY = 'fk_changelog_timestamps_v4';
 
 const RELEASES: ReleaseDefinition[] = [
   {
-    version: '1.6',
-    offsetMinutesAgo: 0,
-    title: 'Instant Out-of-Bounds, Mandatory GPS & Dark-Emerald UI',
+    version: '2.3',
+    releasedAt: '2026-11-27T14:13:00-08:00',
+    title: 'Mobile UI Polish & Imposter Artwork',
     highlights: [
-      'Out-of-Bounds now automatically eliminates Runners as soon as the 30-second countdown ends—no grace period.',
-      'Location access is now required at launch so every player joins at their real GPS position.',
-      'Unified every screen into the dark obsidian and emerald tactical theme with zero HUD overlap on mobile.',
+      'Centered the Join with a code dialog in the upper-middle of the screen so it stays clearly visible above mobile keyboards.',
+      'Added custom tactical artwork for Imposter mode to match Classic, Infection, and Curfew.',
+      'Removed the redundant Radio Check button from the live match HUD for a cleaner map view.',
+      'Dead-centered the Lobby header, fixed zone shrink timer truncation on narrow phones, made mode/map indicator dots interactive, and added tap-outside-to-close on drawers and modals.',
+    ],
+  },
+  {
+    version: '2.2',
+    releasedAt: '2026-11-27T13:46:00-08:00',
+    title: 'Animated Launch Splash Screen',
+    highlights: [
+      'Added an animated tactical radar sweep splash screen when launching Finders Keepers.',
+      'Features the chasing-figures emblem with crisp entrance motion and respects reduced-motion preferences.',
+    ],
+  },
+  {
+    version: '2.1',
+    releasedAt: '2026-11-27T13:22:00-08:00',
+    title: 'Vector Maps, Play/Ranks/You & Lobby Overhaul',
+    highlights: [
+      'Upgraded live maps to smooth 60fps MapLibre GL JS vector styles via OpenFreeMap (Night, Street, Snow) plus Esri Satellite imagery with zero API keys.',
+      'Added Play, Ranks (squad standings & career milestones), and You (callsign, stats, and Looks marker customization) tabs on Home.',
+      'Overhauled the Lobby with swipeable Mode and Map Style pickers, editable custom room codes, and an interactive Circle/Polygon Play Zone Editor.',
+      'Streamlined the live match HUD with a floating top status card and compact bottom dock featuring Flashlight, Pocket Mode, and Slide-to-Confirm tagging.',
+    ],
+  },
+  {
+    version: '2.0',
+    releasedAt: '2026-11-27T12:45:00-08:00',
+    title: 'Instant Out-of-Bounds & Mandatory GPS',
+    highlights: [
+      'Out-of-Bounds now automatically eliminates Runners the moment the 30-second countdown reaches zero—no grace period.',
+      'Required real GPS permission at launch so every player joins from their live location instead of falling back to default coordinates.',
+      'Removed the translucent box behind the Role Reveal question mark for a seamless dark-emerald screen.',
+    ],
+  },
+  {
+    version: '1.9',
+    releasedAt: '2026-11-27T11:50:00-08:00',
+    title: 'Dark Obsidian & Emerald UI + Radio Cleanup',
+    highlights: [
+      'Unified every screen, sheet, and overlay into the dark obsidian and emerald tactical aesthetic across 9:16 mobile viewports.',
+      'Fixed the "Run & hide now" banner overlapping the live map and radio controls.',
+      'Removed the microphone recording feature from Radio chat to keep messaging fast and uncluttered.',
+    ],
+  },
+  {
+    version: '1.8',
+    releasedAt: '2026-11-27T11:20:00-08:00',
+    title: 'Instant PWA Auto-Updates',
+    highlights: [
+      'Configured immediate service worker activation (autoUpdate, skipWaiting, clientsClaim, and outdated cache cleanup).',
+      'Added automatic page reload when a new service worker takes control plus visibility-triggered update checks and no-cache headers for entry files.',
+      'Added a subtle build version indicator on the Home screen so new deployments are immediately clear.',
+    ],
+  },
+  {
+    version: '1.7',
+    releasedAt: '2026-11-27T10:50:00-08:00',
+    title: 'Redesigned App Icon',
+    highlights: [
+      'Upgraded the Finders Keepers app icon with a sharper custom chasing-figures radar emblem across web, PWA maskable, and iOS home screen icons.',
+    ],
+  },
+  {
+    version: '1.6',
+    releasedAt: '2026-11-27T10:15:00-08:00',
+    title: 'Tap-to-Reveal Role Screen & Radio Rebrand',
+    highlights: [
+      'Added a full-screen tap-to-reveal role screen when starting a match with Random team preference.',
+      'Rebranded squad messaging into Radio while keeping dedicated Team and Global channels.',
+      'Updated the Changelog to show real dates and times instead of placeholder dates.',
     ],
   },
   {
     version: '1.5',
-    offsetMinutesAgo: 22,
-    title: 'Role Reveal, Radio & Tactical Redesign',
+    releasedAt: '2026-11-27T09:30:00-08:00',
+    title: 'Static Radar Backdrop, Team/Global Chat & Callsign Icons',
     highlights: [
-      'Added a full-screen tap-to-reveal role screen when starting a match on Random.',
-      'Rebuilt live game navigation around the Map and Team/Global Radio experience.',
-      'Refreshed the in-game HUD and controls sheet for cleaner outdoor legibility.',
-    ],
-  },
-  {
-    version: '1.4',
-    offsetMinutesAgo: 28,
-    title: 'Visual Overhaul & Field Upgrades',
-    highlights: [
-      'Streamlined every screen with a cleaner layout, smoother transitions, and refined mobile spacing.',
-      'Upgraded map styles so every theme switches cleanly with crisp contrast.',
-      'Updated default measurements to US miles and feet and refined callsign map icons.',
-    ],
-  },
-  {
-    version: '1.3',
-    offsetMinutesAgo: 72,
-    title: 'Field Polish & Clarity',
-    highlights: [
-      'Refined live map markers and touch gestures for cleaner readability on smaller screens.',
-      'Improved battery-saving pocket screen handling and alert feedback.',
-      'General performance and stability improvements across solo and multiplayer rounds.',
-    ],
-  },
-  {
-    version: '1.2',
-    offsetMinutesAgo: 135,
-    title: 'Custom Arenas & Recaps',
-    highlights: [
-      'Added more flexible play-area tools and reusable match setups.',
-      'Expanded post-round summaries with shareable visuals and career milestones.',
-      'Improved reliability when moving through areas with weak reception.',
-    ],
-  },
-  {
-    version: '1.1',
-    offsetMinutesAgo: 210,
-    title: 'New Modes & Field Gear',
-    highlights: [
-      'Introduced additional game modes and upgraded team communication.',
-      'Added extra map looks and quick-access safety tools for outdoor sessions.',
-      'Smoothed out lobby invites and automatic team balancing.',
+      'Repositioned the Home radar background lower for better visibility and locked it static while scrolling.',
+      'Prompted for location access directly on app launch.',
+      'Replaced the walkie-talkie with Team and Global chat, updated map markers to show your callsign initial, and displayed all players inside the lobby.',
     ],
   },
   {
     version: '1.0',
-    offsetMinutesAgo: 300,
+    releasedAt: '2026-11-27T08:45:00-08:00',
     title: 'Initial Launch',
     highlights: [
-      'First release of Finders Keepers with real-world GPS manhunt rounds, team fog-of-war, and solo practice.',
+      'First release of Finders Keepers with real-world GPS manhunt rounds, asymmetrical fog-of-war, real-time room sync, and Solo Demo practice.',
     ],
   },
 ];
@@ -113,6 +144,7 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.16 }}
+      onClick={onClose}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
@@ -122,6 +154,7 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
         initial={{ opacity: 0, y: 18, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
         className="w-full max-w-lg max-h-[85dvh] flex flex-col rounded-3xl bg-[#0B0E17] border border-emerald-500/20 shadow-2xl overflow-hidden"
       >
         <div className="p-5 border-b border-white/[0.08] flex items-center justify-between gap-3">
@@ -131,7 +164,9 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
             </div>
             <div>
               <h2 className="text-lg font-bold text-white leading-tight">Changelog</h2>
-              <p className="text-xs text-slate-400">Recent updates to Finders Keepers</p>
+              <p className="text-xs text-slate-400">
+                Release history · v{LATEST_APP_VERSION}
+              </p>
             </div>
           </div>
           <button
@@ -151,7 +186,14 @@ export const ChangelogModal: React.FC<ChangelogModalProps> = ({ onClose }) => {
               className={idx > 0 ? 'pt-5 border-t border-white/[0.07]' : ''}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <h3 className="text-base font-bold text-white">{release.title}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">{release.title}</h3>
+                  {idx === 0 && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                      Latest
+                    </span>
+                  )}
+                </div>
                 <span
                   data-testid="changelog-timestamp"
                   className="text-xs font-mono text-emerald-300/80 tabular-nums shrink-0"

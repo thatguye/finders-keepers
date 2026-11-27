@@ -382,17 +382,20 @@ test('shouldShowRoleReveal gates on random preference and resolveReleaseTimestam
   assert.equal(shouldShowRoleReveal(makePlayer('p3', 'runner')), false);
 
   const now = new Date('2026-04-18T16:30:00Z').getTime();
+  const exactIso = '2026-11-27T14:13:00-08:00';
   const resolved = resolveReleaseTimestamps(
     [
+      { version: '2.3', releasedAt: exactIso },
       { version: '1.5', offsetMinutesAgo: 0 },
       { version: '1.4', offsetMinutesAgo: 30 },
     ],
     now,
-    { '1.4': now - 90 * 60_000 }
+    { '1.4': now - 90 * 60_000, '2.3': now }
   );
+  assert.equal(resolved['2.3'], Date.parse(exactIso));
   assert.equal(resolved['1.5'], now);
   assert.equal(resolved['1.4'], now - 90 * 60_000);
-  const formatted = formatRealDateTime(resolved['1.5']);
+  const formatted = formatRealDateTime(resolved['2.3']);
   assert.ok(formatted.includes('·') && /\d{1,2}:\d{2}/.test(formatted), `Expected real date & time, got ${formatted}`);
 });
 

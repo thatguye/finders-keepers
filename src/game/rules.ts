@@ -750,17 +750,26 @@ export function shouldShowRoleReveal(viewer: PlayerState | undefined): boolean {
 }
 
 /**
- * Stamps changelog releases with real local timestamps (persisted per version, never fake hardcoded months).
+ * Stamps changelog releases with real timestamps. When a release defines an exact
+ * ISO `releasedAt` timestamp, that authoritative date/time is used directly; otherwise
+ * falls back to persisted local timestamps or `offsetMinutesAgo`.
  */
 export function resolveReleaseTimestamps(
-  releases: { version: string; offsetMinutesAgo: number }[],
+  releases: { version: string; offsetMinutesAgo?: number; releasedAt?: string }[],
   nowMs: number,
   stored: Record<string, number> = {}
 ): Record<string, number> {
   const result: Record<string, number> = { ...stored };
   for (const rel of releases) {
+    if (rel.releasedAt) {
+      const parsed = Date.parse(rel.releasedAt);
+      if (Number.isFinite(parsed)) {
+        result[rel.version] = parsed;
+        continue;
+      }
+    }
     if (typeof result[rel.version] !== 'number' || !Number.isFinite(result[rel.version])) {
-      result[rel.version] = nowMs - rel.offsetMinutesAgo * 60_000;
+      result[rel.version] = nowMs - (rel.offsetMinutesAgo ?? 0) * 60_000;
     }
   }
   return result;

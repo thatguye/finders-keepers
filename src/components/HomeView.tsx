@@ -23,6 +23,7 @@ import { formatDistance } from '../game/geo';
 import { BADGE_DEFINITIONS, formatRoomCodeInput, getCallsignInitial } from '../game/rules';
 import { DEFAULT_PLAYER_LOOKS } from '../services/storage';
 import { BrandIcon, PWAInstallButton } from './BrandIcon';
+import { LATEST_APP_VERSION } from './ChangelogModal';
 import { LooksSheet } from './LooksSheet';
 
 interface HomeViewProps {
@@ -357,7 +358,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
                     <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
                       <span>4 Modes · Vector Maps · Live Radar</span>
-                      <span className="font-mono text-slate-500">v2.0</span>
+                      <button
+                        type="button"
+                        onClick={onOpenChangelog}
+                        className="font-mono text-slate-400 hover:text-emerald-300 transition-colors"
+                      >
+                        v{LATEST_APP_VERSION}
+                      </button>
                     </div>
                   </div>
                 </aside>
