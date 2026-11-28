@@ -17,7 +17,11 @@ import {
   WifiOff,
 } from 'lucide-react';
 import type { ChatMessage, ChatScope, LatLng, MapTheme, RoomState } from '../types/game';
-import { evaluateOobState, filterVisiblePlayers } from '../game/rules';
+import {
+  evaluateOobState,
+  filterVisiblePlayers,
+  isInfectionLastManStanding,
+} from '../game/rules';
 import { formatCountdown, formatZoneSize } from '../game/geo';
 import {
   disableFlashlightTorch,
@@ -154,6 +158,8 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
       ? `Custom zone${shrinkMs !== null ? ` · shrinks ${formatCountdown(shrinkMs)}` : ''}`
       : 'Open world · no boundary';
 
+  const isLastManStanding = isInfectionLastManStanding(room);
+
   const leftMetricLabel =
     room.phase === 'head_start'
       ? 'Head start'
@@ -161,6 +167,8 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
       ? 'Paused'
       : room.phase === 'meeting'
       ? 'Meeting'
+      : isLastManStanding
+      ? 'Last Standing'
       : room.settings.mode === 'curfew'
       ? 'Curfew'
       : 'Time left';
@@ -182,12 +190,14 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
     nowMs
   );
 
-  // Strict asymmetrical fog-of-war markers
+  // Strict asymmetrical fog-of-war markers (automatically reveals ALL players live during Infection LMS)
   const visibleMarkers = filterVisiblePlayers(viewer, room, nowMs);
 
-  // Only Hunters & authorized Spectators see Runner Radar Pings (and never during Head Start)
+  // All Hunters (including newly Infected) & authorized Spectators see Runner Radar Pings during Hunt
+  // (During Infection LMS, everyone is already live on the map so static ping snapshots aren't needed)
   const visiblePings =
     room.phase === 'hunt' &&
+    !isLastManStanding &&
     (role === 'hunter' ||
       (role === 'spectator' && room.settings.spectatorAccess !== 'disabled'))
       ? room.pings
@@ -248,7 +258,11 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
               <div className="grid grid-cols-2 divide-x divide-white/[0.08]">
                 <div className="px-3.5 sm:px-4 py-2.5 sm:py-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] sm:text-xs font-semibold text-emerald-300/80">
+                    <span
+                      className={`text-[11px] sm:text-xs font-semibold ${
+                        isLastManStanding ? 'text-red-400' : 'text-emerald-300/80'
+                      }`}
+                    >
                       {leftMetricLabel}
                     </span>
                     {room.settings.mode === 'imposter' && viewer && (
@@ -274,7 +288,9 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                   </div>
                   <div
                     data-testid="hud-countdown"
-                    className="mt-1 font-display text-[2.2rem] sm:text-[2.6rem] font-extrabold text-white leading-none tabular-nums tracking-tight"
+                    className={`mt-1 font-display text-[2.2rem] sm:text-[2.6rem] font-extrabold leading-none tabular-nums tracking-tight ${
+                      isLastManStanding ? 'text-red-300' : 'text-white'
+                    }`}
                   >
                     {formatCountdown(activeCountdownMs)}
                   </div>
@@ -283,17 +299,27 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                 <div className="px-3.5 sm:px-4 py-2.5 sm:py-3 flex flex-col justify-between">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] sm:text-xs font-medium text-slate-400">
-                      Next ping
+                      {isLastManStanding ? 'Live radar' : 'Next ping'}
                     </span>
-                    <span className="font-mono text-xs sm:text-sm font-bold text-emerald-300 tabular-nums">
-                      {nextPingMs !== null ? formatCountdown(nextPingMs) : 'Off'}
+                    <span
+                      className={`font-mono text-xs sm:text-sm font-bold tabular-nums ${
+                        isLastManStanding ? 'text-red-400' : 'text-emerald-300'
+                      }`}
+                    >
+                      {isLastManStanding
+                        ? 'ALL LIVE'
+                        : nextPingMs !== null
+                        ? formatCountdown(nextPingMs)
+                        : 'Off'}
                     </span>
                   </div>
 
                   <div className="h-1.5 w-full rounded-full bg-white/[0.1] overflow-hidden my-1.5 sm:my-2">
                     <div
-                      className="h-full rounded-full bg-emerald-400 transition-all duration-500"
-                      style={{ width: `${Math.round(pingProgress * 100)}%` }}
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        isLastManStanding ? 'bg-red-400 animate-pulse' : 'bg-emerald-400'
+                      }`}
+                      style={{ width: `${isLastManStanding ? 100 : Math.round(pingProgress * 100)}%` }}
                     />
                   </div>
 
@@ -348,6 +374,34 @@ export const ActiveGameView: React.FC<ActiveGameViewProps> = ({
                 <span className="text-[10px] font-extrabold leading-none tracking-tight">N</span>
               </motion.button>
             </div>
+
+            {/* Infection Last Man Standing Live-Reveal Banner */}
+            <AnimatePresence>
+              {isLastManStanding && room.phase === 'hunt' && (
+                <motion.div
+                  data-testid="lms-active-banner"
+                  initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                  className="pointer-events-auto rounded-2xl bg-[#1A0B10]/94 border border-red-400/55 backdrop-blur-xl px-3.5 py-2 shadow-2xl flex items-center justify-between gap-2.5"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      aria-hidden="true"
+                      className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse shrink-0"
+                    />
+                    <span className="text-[11px] sm:text-xs font-extrabold text-red-200 tracking-wide truncate">
+                      {role === 'runner'
+                        ? 'LAST SURVIVOR · ALL LIVE'
+                        : 'LAST STANDING · ALL LIVE'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold text-red-300 uppercase shrink-0">
+                    Final Hunt
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Out-of-Bounds Elimination Countdown Banner (No Grace Period) */}
             <AnimatePresence>

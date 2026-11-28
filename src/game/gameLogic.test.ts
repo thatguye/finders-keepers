@@ -13,11 +13,13 @@ import {
   totalPathDistanceMeters,
 } from './geo';
 import {
+  applyInfectionLastManStanding,
   assignTeams,
   calculateScores,
   canAccessGameWithLocation,
   checkWinCondition,
   createDefaultSettings,
+  createPingSnapshots,
   DEFAULT_COORDS,
   evaluateOobState,
   filterVisibleChatMessages,
@@ -25,6 +27,8 @@ import {
   formatRealDateTime,
   generateRoomCode,
   getCallsignInitial,
+  isInfectionLastManStanding,
+  mergeRemoteRoomState,
   OOB_COUNTDOWN_SECONDS,
   processTag,
   resolveReleaseTimestamps,
@@ -137,15 +141,18 @@ test('canAccessGameWithLocation blocks gameplay until real GPS coordinates are g
   assert.equal(canAccessGameWithLocation('granted', { lat: 30.2672, lng: -97.7431 }), true);
 });
 
-test('shouldThrottleGpsUpload uses 4s while moving >3m and 12s while stationary', () => {
+test('shouldThrottleGpsUpload uses high-frequency 1.5s moving (>1.5m), 4s stationary, and force bypass', () => {
   const p0 = { lat: DEFAULT_COORDS.lat, lng: DEFAULT_COORDS.lng, ts: 1000 };
-  const moved5m = movePointByBearing(DEFAULT_COORDS, 5, 90);
-  assert.equal(shouldThrottleGpsUpload(p0, { ...moved5m, ts: 3500 }), false);
-  assert.equal(shouldThrottleGpsUpload(p0, { ...moved5m, ts: 5100 }), true);
+  const moved3m = movePointByBearing(DEFAULT_COORDS, 3, 90);
+  assert.equal(shouldThrottleGpsUpload(p0, { ...moved3m, ts: 2100 }), false);
+  assert.equal(shouldThrottleGpsUpload(p0, { ...moved3m, ts: 2600 }), true);
 
-  const stationary1m = movePointByBearing(DEFAULT_COORDS, 1, 90);
-  assert.equal(shouldThrottleGpsUpload(p0, { ...stationary1m, ts: 9000 }), false);
-  assert.equal(shouldThrottleGpsUpload(p0, { ...stationary1m, ts: 13_100 }), true);
+  const stationaryHalfMeter = movePointByBearing(DEFAULT_COORDS, 0.5, 90);
+  assert.equal(shouldThrottleGpsUpload(p0, { ...stationaryHalfMeter, ts: 4200 }), false);
+  assert.equal(shouldThrottleGpsUpload(p0, { ...stationaryHalfMeter, ts: 5100 }), true);
+
+  // Forced pre-ping / LMS flush bypasses throttling
+  assert.equal(shouldThrottleGpsUpload(p0, { ...stationaryHalfMeter, ts: 1200 }, true), true);
 });
 
 test('strict asymmetrical fog-of-war hides Runners from Hunters except OOB exposed or Emergency', () => {
@@ -448,4 +455,157 @@ test('shouldShowSplashOnLaunch honors normal timing, reduced motion, and ?autost
   assert.deepEqual(shouldShowSplashOnLaunch('?code=ABC123', false), { show: true, durationMs: 2250 });
   assert.deepEqual(shouldShowSplashOnLaunch('?autostart=1', false), { show: false, durationMs: 0 });
   assert.deepEqual(shouldShowSplashOnLaunch('?code=ABC123&autostart=1', true), { show: false, durationMs: 0 });
+});
+
+test('Infection Last Man Standing clamps timer down to configured minutes, never adds time, and reveals all active players to both sides', () => {
+  const now = 500_000;
+  const settings = {
+    ...createDefaultSettings(DEFAULT_COORDS),
+    mode: 'infection' as const,
+    lastManStandingMin: 2,
+  };
+  const hunter: PlayerState = {
+    ...makePlayer('h1', 'hunter'),
+    role: 'hunter',
+    lastPos: { ...DEFAULT_COORDS, ts: now },
+  };
+  const r1: PlayerState = {
+    ...makePlayer('r1', 'runner'),
+    role: 'runner',
+    lastPos: { ...movePointByBearing(DEFAULT_COORDS, 150, 90), ts: now },
+  };
+  const r2: PlayerState = {
+    ...makePlayer('r2', 'runner'),
+    role: 'runner',
+    lastPos: { ...movePointByBearing(DEFAULT_COORDS, 280, 180), ts: now },
+  };
+
+  const room: RoomState = {
+    code: 'INF001',
+    isSoloDemo: false,
+    hostId: 'h1',
+    phase: 'hunt',
+    settings,
+    currentZone: settings.zone,
+    nextZonePreview: null,
+    nextZoneTransitionAt: null,
+    shrinkStep: 0,
+    players: [hunter, r1, r2],
+    pings: [],
+    tags: [],
+    roundStartedAt: now - 60_000,
+    headStartEndsAt: now - 50_000,
+    roundEndsAt: now + 15 * 60_000, // 15 min remaining
+    lastPingAt: null,
+    nextPingAt: now + 60_000,
+    pausedAt: null,
+    emergency: null,
+    meeting: null,
+    winner: null,
+    updatedAt: now,
+  };
+
+  // With 2 Runners still active, LMS is NOT active
+  assert.equal(isInfectionLastManStanding(room), false);
+
+  // Tagging r1 turns r1 into an Infected Hunter and leaves r2 as the 1 final Survivor -> triggers LMS!
+  const afterTag = processTag(room, 'r1', 'h1', 'physical', now + 1000);
+  assert.equal(afterTag.lastManStandingActive, true);
+  assert.equal(isInfectionLastManStanding(afterTag), true);
+  assert.equal(afterTag.roundEndsAt, now + 1000 + 2 * 60_000);
+
+  // Idempotent duplicate tag on already-infected r1 is ignored
+  const afterDupTag = processTag(afterTag, 'r1', 'h1', 'physical', now + 2000);
+  assert.equal(afterDupTag, afterTag);
+
+  // Both original Hunter, newly Infected Hunter, AND final Survivor see ALL 3 active players live
+  const finalHunter = afterTag.players.find((p) => p.id === 'h1')!;
+  const infectedHunter = afterTag.players.find((p) => p.id === 'r1')!;
+  const lastSurvivor = afterTag.players.find((p) => p.id === 'r2')!;
+
+  const hunterSees = filterVisiblePlayers(finalHunter, afterTag, now + 1000);
+  const infectedSees = filterVisiblePlayers(infectedHunter, afterTag, now + 1000);
+  const survivorSees = filterVisiblePlayers(lastSurvivor, afterTag, now + 1000);
+
+  assert.deepEqual(hunterSees.map((v) => v.player.id).sort(), ['h1', 'r1', 'r2']);
+  assert.deepEqual(infectedSees.map((v) => v.player.id).sort(), ['h1', 'r1', 'r2']);
+  assert.deepEqual(survivorSees.map((v) => v.player.id).sort(), ['h1', 'r1', 'r2']);
+  assert.equal(hunterSees.find((v) => v.player.id === 'r2')?.isLastManStandingReveal, true);
+  assert.equal(survivorSees.find((v) => v.player.id === 'h1')?.isLastManStandingReveal, true);
+  assert.equal(survivorSees.find((v) => v.player.id === 'r1')?.isLastManStandingReveal, true);
+
+  // If round already had LESS time remaining than LMS setting (e.g., 45s left vs 2 min slider), never add time
+  const shortClockRoom: RoomState = {
+    ...room,
+    players: [hunter, { ...r1, role: 'hunter' }, r2],
+    roundEndsAt: now + 45_000,
+    lastManStandingActive: false,
+  };
+  const applied = applyInfectionLastManStanding(shortClockRoom, now);
+  assert.equal(applied.justTriggered, true);
+  assert.equal(applied.room.roundEndsAt, now + 45_000);
+});
+
+test('createPingSnapshots and mergeRemoteRoomState preserve fresher live GPS and adopt newer synced pings', () => {
+  const t0 = 1_000_000;
+  const h1: PlayerState = {
+    ...makePlayer('h1', 'hunter'),
+    role: 'hunter',
+    lastPos: { ...DEFAULT_COORDS, ts: t0 },
+  };
+  const r1: PlayerState = {
+    ...makePlayer('r1', 'runner'),
+    role: 'runner',
+    lastPos: { ...movePointByBearing(DEFAULT_COORDS, 120, 45), ts: t0 + 5000 },
+  };
+
+  const localRoom: RoomState = {
+    code: 'SYNC01',
+    isSoloDemo: false,
+    hostId: 'h1',
+    phase: 'hunt',
+    settings: createDefaultSettings(DEFAULT_COORDS),
+    currentZone: createDefaultSettings(DEFAULT_COORDS).zone,
+    nextZonePreview: null,
+    nextZoneTransitionAt: null,
+    shrinkStep: 0,
+    players: [h1, r1],
+    pings: [],
+    tags: [],
+    roundStartedAt: t0 - 10_000,
+    headStartEndsAt: t0 - 5000,
+    roundEndsAt: t0 + 600_000,
+    lastPingAt: null,
+    nextPingAt: t0 + 30_000,
+    pausedAt: null,
+    emergency: null,
+    meeting: null,
+    winner: null,
+    updatedAt: t0 + 5000,
+  };
+
+  const pings = createPingSnapshots(localRoom, t0 + 6000);
+  assert.equal(pings.length, 1);
+  assert.equal(pings[0].playerId, 'r1');
+
+  // Remote room has slightly older GPS for r1 (ts: t0), but newer synced pings (lastPingAt: t0 + 6000)
+  const remoteRoom: RoomState = {
+    ...localRoom,
+    players: [
+      h1,
+      { ...r1, lastPos: { ...DEFAULT_COORDS, ts: t0 } },
+    ],
+    pings,
+    lastPingAt: t0 + 6000,
+    nextPingAt: t0 + 66_000,
+    updatedAt: t0 + 6000,
+  };
+
+  const merged = mergeRemoteRoomState(localRoom, remoteRoom);
+  // Preserves local fresher GPS fix (ts: t0 + 5000)
+  assert.equal(merged.players.find((p) => p.id === 'r1')?.lastPos?.ts, t0 + 5000);
+  // Adopts newer synced pings from remote
+  assert.equal(merged.pings.length, 1);
+  assert.equal(merged.lastPingAt, t0 + 6000);
+  assert.equal(merged.nextPingAt, t0 + 66_000);
 });

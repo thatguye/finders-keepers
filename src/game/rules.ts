@@ -8,6 +8,7 @@ import type {
   LatLng,
   OobStatus,
   PlayerState,
+  RadarPing,
   RoomSettings,
   RoomState,
   RoundPhase,
@@ -147,6 +148,7 @@ export function createDefaultSettings(center: LatLng = DEFAULT_COORDS): RoomSett
     units: 'mi',
     mapTheme: 'night',
     huntersCanTalk: true,
+    lastManStandingMin: 3,
   };
 }
 
@@ -365,21 +367,146 @@ export function evaluateOobState(
 }
 
 /**
- * Cellular data optimization throttle:
- * - Moving > 3 meters: upload every 4 seconds
- * - Stationary <= 3 meters: upload every 12 seconds
+ * High-frequency live GPS upload cadence for crisp pursuit & accurate radar pings:
+ * - Force flag (pre-ping, role change, resume): upload immediately
+ * - Moving (> 1.5 meters): upload every 1.5 seconds
+ * - Stationary (<= 1.5 meters): upload every 4 seconds
  */
 export function shouldThrottleGpsUpload(
   lastUploaded: GpsPoint | null | undefined,
-  nextPoint: GpsPoint
+  nextPoint: GpsPoint,
+  force = false
 ): boolean {
-  if (!lastUploaded) return true;
+  if (force || !lastUploaded) return true;
   const elapsedMs = nextPoint.ts - lastUploaded.ts;
+  if (elapsedMs < 0) return true;
   const movedMeters = haversineMeters(lastUploaded, nextPoint);
-  if (movedMeters > 3) {
-    return elapsedMs >= 4000;
+  if (movedMeters > 1.5) {
+    return elapsedMs >= 1500;
   }
-  return elapsedMs >= 12000;
+  return elapsedMs >= 4000;
+}
+
+/**
+ * True when an Infection round is in active Hunt (or Emergency Pause) with at least
+ * 2 players, at least 1 Hunter, and exactly 1 surviving Runner remaining.
+ */
+export function isInfectionLastManStanding(room: RoomState): boolean {
+  if (room.settings.mode !== 'infection') return false;
+  if (room.phase !== 'hunt' && room.phase !== 'emergency_pause') return false;
+  if (room.players.length < 2) return false;
+  const activeRunners = room.players.filter((p) => p.role === 'runner' && !p.eliminated);
+  const activeHunters = room.players.filter((p) => p.role === 'hunter' && !p.eliminated);
+  return activeRunners.length === 1 && activeHunters.length >= 1;
+}
+
+/**
+ * Activates Infection Last Man Standing the instant 1 Runner remains:
+ * - Automatically lowers `roundEndsAt` down to `nowMs + lastManStandingMin * 60_000`
+ *   (never increases the clock if less time was already remaining).
+ * - Marks `lastManStandingActive = true` so every player's live GPS is revealed.
+ */
+export function applyInfectionLastManStanding(
+  room: RoomState,
+  nowMs: number
+): { room: RoomState; justTriggered: boolean } {
+  if (room.lastManStandingActive) {
+    return { room, justTriggered: false };
+  }
+  if (room.phase !== 'hunt' || !isInfectionLastManStanding(room)) {
+    return { room, justTriggered: false };
+  }
+  const lmsMinutes = Math.max(
+    1,
+    Math.min(room.settings.roundLengthMin, room.settings.lastManStandingMin ?? 3)
+  );
+  const targetEnd = nowMs + lmsMinutes * 60_000;
+  const nextRoundEndsAt =
+    typeof room.roundEndsAt === 'number' ? Math.min(room.roundEndsAt, targetEnd) : targetEnd;
+
+  return {
+    justTriggered: true,
+    room: {
+      ...room,
+      roundEndsAt: nextRoundEndsAt,
+      lastManStandingActive: true,
+      lastManStandingTriggeredAt: nowMs,
+      updatedAt: nowMs,
+    },
+  };
+}
+
+/**
+ * Creates authoritative radar ping snapshots from the freshest live GPS of every active Runner.
+ */
+export function createPingSnapshots(room: RoomState, nowMs: number): RadarPing[] {
+  return room.players
+    .filter((p) => p.role === 'runner' && !p.eliminated && p.lastPos)
+    .map((p) => ({
+      id: `ping_${nowMs}_${p.id}`,
+      playerId: p.id,
+      playerName: p.name,
+      lat: p.lastPos!.lat,
+      lng: p.lastPos!.lng,
+      pingedAt: nowMs,
+    }));
+}
+
+/**
+ * Merges an authoritative remote room snapshot into local state without clobbering
+ * fresher live GPS fixes, fresher radar pings, or newer chat messages.
+ */
+export function mergeRemoteRoomState(local: RoomState | null, remote: RoomState): RoomState {
+  if (!local || local.code !== remote.code) return remote;
+  // Never roll back to an older phase/state from a stale snapshot unless remote is newer
+  if (local.updatedAt > remote.updatedAt && local.phase === remote.phase) {
+    // Still adopt any newer ping batch or fresher player GPS if remote carries it
+    const remoteHasNewerPing =
+      typeof remote.lastPingAt === 'number' &&
+      (local.lastPingAt === null || remote.lastPingAt > local.lastPingAt);
+    if (!remoteHasNewerPing) {
+      return local;
+    }
+  }
+
+  const localPlayerById = new Map(local.players.map((p) => [p.id, p]));
+  const mergedPlayers = remote.players.map((rp) => {
+    const lp = localPlayerById.get(rp.id);
+    if (!lp) return rp;
+    const keepLocalGps =
+      lp.lastPos && (!rp.lastPos || lp.lastPos.ts > rp.lastPos.ts);
+    const mergedTrail =
+      keepLocalGps && lp.trail.length >= rp.trail.length ? lp.trail : rp.trail;
+    return {
+      ...rp,
+      lastPos: keepLocalGps ? lp.lastPos : rp.lastPos,
+      trail: mergedTrail,
+      lastSeenAt: Math.max(lp.lastSeenAt ?? 0, rp.lastSeenAt ?? 0),
+    };
+  });
+
+  // Preserve whichever ping batch is fresher
+  const useLocalPings =
+    typeof local.lastPingAt === 'number' &&
+    (remote.lastPingAt === null || local.lastPingAt > remote.lastPingAt) &&
+    local.phase === remote.phase;
+
+  // Union chat messages by id, sorted chronologically
+  const chatMap = new Map<string, ChatMessage>();
+  for (const m of local.chatMessages ?? []) chatMap.set(m.id, m);
+  for (const m of remote.chatMessages ?? []) chatMap.set(m.id, m);
+  const mergedChat = Array.from(chatMap.values())
+    .sort((a, b) => a.ts - b.ts)
+    .slice(-100);
+
+  return {
+    ...remote,
+    players: mergedPlayers,
+    pings: useLocalPings ? local.pings : remote.pings,
+    lastPingAt: useLocalPings ? local.lastPingAt : remote.lastPingAt,
+    nextPingAt: useLocalPings ? local.nextPingAt : remote.nextPingAt,
+    chatMessages: mergedChat,
+  };
 }
 
 export function checkWinCondition(
@@ -431,7 +558,10 @@ export function processTag(
   nowMs: number
 ): RoomState {
   const target = room.players.find((p) => p.id === taggedPlayerId);
-  if (!target || target.eliminated) return room;
+  // Idempotent guard: cannot re-tag eliminated players or already-infected Hunters
+  if (!target || target.eliminated || (target.role !== 'runner' && reason !== 'voted_out')) {
+    return room;
+  }
 
   const isInfection = room.settings.mode === 'infection' && reason !== 'voted_out';
   const resultingRole: TeamRole = isInfection ? 'hunter' : 'spectator';
@@ -470,7 +600,7 @@ export function processTag(
     resultingRole,
   };
 
-  const nextRoom: RoomState = {
+  let nextRoom: RoomState = {
     ...room,
     players: updatedPlayers,
     tags: [...room.tags, tagEvent],
@@ -486,6 +616,9 @@ export function processTag(
       winReason: winCheck.reason,
     };
   }
+
+  // In Infection mode, automatically trigger Last Man Standing when 1 Runner remains
+  nextRoom = applyInfectionLastManStanding(nextRoom, nowMs).room;
   return nextRoom;
 }
 
@@ -504,6 +637,7 @@ export interface VisiblePlayerMarker {
   isExposedOob: boolean;
   isEmergencyPin: boolean;
   isDelayed: boolean;
+  isLastManStandingReveal?: boolean;
 }
 
 export function filterVisiblePlayers(
@@ -513,6 +647,7 @@ export function filterVisiblePlayers(
 ): VisiblePlayerMarker[] {
   if (!viewer) return [];
   const results: VisiblePlayerMarker[] = [];
+  const lmsRevealAll = isInfectionLastManStanding(room);
 
   for (const p of room.players) {
     const isSelf = p.id === viewer.id;
@@ -544,6 +679,7 @@ export function filterVisiblePlayers(
         isExposedOob: p.oobStatus === 'exposed',
         isEmergencyPin: false,
         isDelayed: false,
+        isLastManStandingReveal: lmsRevealAll,
       });
       continue;
     }
@@ -555,6 +691,19 @@ export function filterVisiblePlayers(
         isExposedOob: false,
         isEmergencyPin: false,
         isDelayed: false,
+      });
+      continue;
+    }
+
+    // Infection Last Man Standing: automatically reveals ALL players live to both Survivor and Hunters
+    if (lmsRevealAll && !p.eliminated && (viewer.role === 'runner' || viewer.role === 'hunter')) {
+      results.push({
+        player: p,
+        position: p.lastPos,
+        isExposedOob: p.oobStatus === 'exposed',
+        isEmergencyPin: false,
+        isDelayed: false,
+        isLastManStandingReveal: true,
       });
       continue;
     }
@@ -575,7 +724,7 @@ export function filterVisiblePlayers(
         !p.eliminated &&
         p.oobStatus === 'exposed'
       ) {
-        // 30-second Out-of-Bounds penalty exposes Runner's live GPS to Hunters
+        // Out-of-Bounds exposes Runner's live GPS to Hunters
         results.push({
           player: p,
           position: p.lastPos,
@@ -588,7 +737,7 @@ export function filterVisiblePlayers(
     }
 
     if (viewer.role === 'runner') {
-      // Runners ONLY see fellow live Runners, NEVER Hunters
+      // Runners ONLY see fellow live Runners, NEVER Hunters (except during Infection LMS above)
       if (p.role === 'runner' && !p.eliminated) {
         results.push({
           player: p,
@@ -611,6 +760,7 @@ export function filterVisiblePlayers(
           isExposedOob: p.oobStatus === 'exposed',
           isEmergencyPin: false,
           isDelayed: false,
+          isLastManStandingReveal: lmsRevealAll,
         });
       } else if (access === 'delayed_1m') {
         const cutoff = nowMs - 60_000;

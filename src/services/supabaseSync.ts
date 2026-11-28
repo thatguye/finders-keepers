@@ -1,5 +1,5 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
-import type { ChatMessage, EmergencyAlert, GpsPoint, RoomState, TagEvent } from '../types/game';
+import type { ChatMessage, EmergencyAlert, GpsPoint, RadarPing, RoomState, TagEvent } from '../types/game';
 import { roundCoord } from '../game/geo';
 
 const FALLBACK_SUPABASE_URL = 'https://bjnhbwqssckkdouohswe.supabase.co';
@@ -36,11 +36,24 @@ export type QueuedAction =
       roomCode: string;
       payload: RoomState;
       queuedAt: number;
+    }
+  | {
+      type: 'ping_batch';
+      roomCode: string;
+      payload: { pings: RadarPing[]; lastPingAt: number; nextPingAt: number | null };
+      queuedAt: number;
     };
+
+export interface PingBatchSignal {
+  pings: RadarPing[];
+  lastPingAt: number;
+  nextPingAt: number | null;
+}
 
 export interface RoomBroadcastHandlers {
   onGpsDelta: (delta: { playerId: string; lat: number; lng: number; ts: number }) => void;
   onRoomUpdate: (room: RoomState) => void;
+  onPingBatch?: (batch: PingBatchSignal) => void;
   onTagSignal: (tag: {
     taggedId: string;
     taggerId?: string;
@@ -73,7 +86,7 @@ class SupabaseSyncService {
       realtime: {
         worker: true,
         params: {
-          eventsPerSecond: 10,
+          eventsPerSecond: 20,
         },
       },
       auth: {
@@ -122,7 +135,7 @@ class SupabaseSyncService {
   }
 
   private enqueue(action: QueuedAction): void {
-    // Deduplicate GPS updates for same player in queue (keep newest)
+    // Deduplicate GPS, room_sync, and ping_batch updates (always keep freshest)
     if (action.type === 'gps') {
       this.queue = this.queue.filter(
         (q) =>
@@ -131,6 +144,10 @@ class SupabaseSyncService {
             q.roomCode === action.roomCode &&
             q.payload.playerId === action.payload.playerId
           )
+      );
+    } else if (action.type === 'room_sync' || action.type === 'ping_batch') {
+      this.queue = this.queue.filter(
+        (q) => !(q.type === action.type && q.roomCode === action.roomCode)
       );
     }
     this.queue.push(action);
@@ -144,6 +161,21 @@ class SupabaseSyncService {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       this.enqueue({ type: 'room_sync', roomCode: code, payload: room, queuedAt: Date.now() });
       return false;
+    }
+
+    // Broadcast immediately over Realtime so peers receive pings, tags, LMS, and shrinks in <100ms
+    let broadcastOk = false;
+    if (this.channel && this.activeRoomCode === code) {
+      try {
+        const res = await this.channel.send({
+          type: 'broadcast',
+          event: 'room_state',
+          payload: room,
+        });
+        broadcastOk = res === 'ok';
+      } catch {
+        broadcastOk = false;
+      }
     }
 
     try {
@@ -166,18 +198,12 @@ class SupabaseSyncService {
           { onConflict: 'code' }
         );
       }
-
-      if (this.channel && this.activeRoomCode === code) {
-        await this.channel.send({
-          type: 'broadcast',
-          event: 'room_state',
-          payload: room,
-        });
-      }
       return true;
     } catch {
-      this.enqueue({ type: 'room_sync', roomCode: code, payload: room, queuedAt: Date.now() });
-      return false;
+      if (!broadcastOk) {
+        this.enqueue({ type: 'room_sync', roomCode: code, payload: room, queuedAt: Date.now() });
+      }
+      return broadcastOk;
     }
   }
 
@@ -228,6 +254,11 @@ class SupabaseSyncService {
       .on('broadcast', { event: 'room_state' }, ({ payload }) => {
         if (payload && payload.code) {
           this.handlers?.onRoomUpdate(payload as RoomState);
+        }
+      })
+      .on('broadcast', { event: 'ping_batch' }, ({ payload }) => {
+        if (payload && Array.isArray(payload.pings) && typeof payload.lastPingAt === 'number') {
+          this.handlers?.onPingBatch?.(payload as PingBatchSignal);
         }
       })
       .on('broadcast', { event: 'tag' }, ({ payload }) => {
@@ -309,6 +340,36 @@ class SupabaseSyncService {
       }
     } catch {
       this.enqueue({ type: 'gps', roomCode, payload, queuedAt: Date.now() });
+    }
+  }
+
+  public async sendPingBatch(
+    roomCode: string,
+    pings: RadarPing[],
+    lastPingAt: number,
+    nextPingAt: number | null
+  ): Promise<void> {
+    const code = roomCode.toUpperCase();
+    const payload = { pings, lastPingAt, nextPingAt };
+    if (
+      (typeof navigator !== 'undefined' && !navigator.onLine) ||
+      !this.channel ||
+      this.activeRoomCode !== code
+    ) {
+      this.enqueue({ type: 'ping_batch', roomCode: code, payload, queuedAt: Date.now() });
+      return;
+    }
+    try {
+      const res = await this.channel.send({
+        type: 'broadcast',
+        event: 'ping_batch',
+        payload,
+      });
+      if (res !== 'ok') {
+        this.enqueue({ type: 'ping_batch', roomCode: code, payload, queuedAt: Date.now() });
+      }
+    } catch {
+      this.enqueue({ type: 'ping_batch', roomCode: code, payload, queuedAt: Date.now() });
     }
   }
 
@@ -397,7 +458,13 @@ class SupabaseSyncService {
           if (!ok) remaining.push(item);
         } else if (this.channel && this.activeRoomCode === item.roomCode.toUpperCase()) {
           const eventName =
-            item.type === 'gps' ? 'gps' : item.type === 'tag' ? 'tag' : 'emergency';
+            item.type === 'gps'
+              ? 'gps'
+              : item.type === 'tag'
+              ? 'tag'
+              : item.type === 'ping_batch'
+              ? 'ping_batch'
+              : 'emergency';
           const payload = item.type === 'emergency' ? { alert: item.payload } : item.payload;
           const res = await this.channel.send({ type: 'broadcast', event: eventName, payload });
           if (res !== 'ok') remaining.push(item);

@@ -13,6 +13,7 @@ import {
   DEFAULT_COORDS,
   evaluateOobState,
   generateRoomCode,
+  isInfectionLastManStanding,
   PLAYER_COLORS,
   processTag,
 } from './rules';
@@ -310,11 +311,17 @@ export function stepSoloBots(room: RoomState, dtSec: number, nowMs: number): Roo
         bearing = (away + 360) % 360;
       }
     } else if (p.role === 'hunter') {
-      // Chase exposed runner or latest radar ping
+      // During Infection Last Man Standing, all Hunters see & chase the final Survivor live
+      const lmsSurvivor = isInfectionLastManStanding(room)
+        ? room.players.find((r) => r.role === 'runner' && !r.eliminated && r.lastPos)
+        : undefined;
+      // Otherwise chase exposed OOB runner or latest radar ping
       const exposedRunner = room.players.find(
         (r) => r.role === 'runner' && !r.eliminated && r.oobStatus === 'exposed' && r.lastPos
       );
-      if (exposedRunner?.lastPos) {
+      if (lmsSurvivor?.lastPos) {
+        bearing = bearingBetween(p.lastPos, lmsSurvivor.lastPos);
+      } else if (exposedRunner?.lastPos) {
         bearing = bearingBetween(p.lastPos, exposedRunner.lastPos);
       } else if (latestPingsByPlayer.size > 0) {
         const targets = Array.from(latestPingsByPlayer.values());

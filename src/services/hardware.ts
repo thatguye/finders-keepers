@@ -5,6 +5,7 @@ export type TacticalAlertType =
   | 'tagged'
   | 'oob_warning'
   | 'emergency'
+  | 'last_man_standing'
   | 'radio_rx'
   | 'victory';
 
@@ -51,6 +52,7 @@ const VIBRATE_PATTERNS: Record<TacticalAlertType, number[]> = {
   tagged: [220, 100, 220],
   oob_warning: [90, 50, 90, 50, 90],
   emergency: [300, 100, 300, 100, 400],
+  last_man_standing: [180, 70, 180, 70, 320],
   radio_rx: [50],
   victory: [100, 60, 100, 60, 240],
 };
@@ -62,6 +64,7 @@ const FLASH_COLORS: Record<TacticalAlertType, FlashColor> = {
   tagged: 'crimson',
   oob_warning: 'crimson',
   emergency: 'crimson',
+  last_man_standing: 'crimson',
   radio_rx: 'emerald',
   victory: 'emerald',
 };
@@ -72,15 +75,21 @@ export function triggerTacticalAlert(
   onVisualFlash?: (color: FlashColor) => void
 ): void {
   // Always flash visual screen-edge indicator in stealth mode or for critical events
-  if (stealthHapticMode || type === 'emergency' || type === 'oob_warning' || type === 'tagged') {
+  if (
+    stealthHapticMode ||
+    type === 'emergency' ||
+    type === 'oob_warning' ||
+    type === 'tagged' ||
+    type === 'last_man_standing'
+  ) {
     onVisualFlash?.(FLASH_COLORS[type]);
   }
 
-  // Trigger distinct haptic pattern when stealth mode is active (or emergency)
+  // Trigger distinct haptic pattern when stealth mode is active (or critical events)
   if (
     typeof navigator !== 'undefined' &&
     typeof navigator.vibrate === 'function' &&
-    (stealthHapticMode || type === 'emergency' || type === 'tagged')
+    (stealthHapticMode || type === 'emergency' || type === 'tagged' || type === 'last_man_standing')
   ) {
     try {
       navigator.vibrate(VIBRATE_PATTERNS[type]);
@@ -150,6 +159,11 @@ function playSynthChime(type: TacticalAlertType): void {
         tone(880, 0, 0.22, 'sawtooth', 0.18);
         tone(660, 0.24, 0.22, 'sawtooth', 0.18);
         tone(880, 0.48, 0.26, 'sawtooth', 0.18);
+        break;
+      case 'last_man_standing':
+        tone(440, 0, 0.15, 'sawtooth', 0.14);
+        tone(587.33, 0.16, 0.15, 'sawtooth', 0.15);
+        tone(880, 0.34, 0.36, 'triangle', 0.18);
         break;
       case 'radio_rx':
         tone(1200, 0, 0.06, 'sine', 0.07);

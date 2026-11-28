@@ -56,6 +56,8 @@ export interface RoomSettings {
   mapTheme: MapTheme;
   /** Whether Hunters can communicate on team radio */
   huntersCanTalk?: boolean;
+  /** Infection mode: when 1 Runner remains, timer automatically drops to this many minutes (1-15) */
+  lastManStandingMin?: number;
 }
 
 export interface PlayerState {
@@ -168,6 +170,9 @@ export interface RoomState {
   meeting: ImposterMeeting | null;
   winner: 'runners' | 'hunters' | 'imposters' | null;
   winReason?: string;
+  /** Infection mode: true once only 1 Runner remains (timer clamped & all locations live) */
+  lastManStandingActive?: boolean;
+  lastManStandingTriggeredAt?: number | null;
   updatedAt: number;
 }
 

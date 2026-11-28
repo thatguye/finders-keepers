@@ -468,11 +468,13 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   <button
                     type="button"
                     disabled={!isHost || s.roundLengthMin <= ROUND_STEPS[0]}
-                    onClick={() =>
+                    onClick={() => {
+                      const nextLen = stepOption(ROUND_STEPS, s.roundLengthMin, -1);
                       patchSettings({
-                        roundLengthMin: stepOption(ROUND_STEPS, s.roundLengthMin, -1),
-                      })
-                    }
+                        roundLengthMin: nextLen,
+                        lastManStandingMin: Math.min(s.lastManStandingMin ?? 3, nextLen),
+                      });
+                    }}
                     aria-label="Decrease round length"
                     className="w-10 h-10 rounded-xl bg-[#161B29] hover:bg-[#1F263A] disabled:opacity-35 border border-white/[0.09] flex items-center justify-center text-white"
                   >
@@ -574,6 +576,65 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Infection Mode: Last Man Standing Timer Slider */}
+              {s.mode === 'infection' && (() => {
+                const maxLmsMin = Math.max(1, Math.min(15, s.roundLengthMin));
+                const currentLmsMin = Math.max(1, Math.min(maxLmsMin, s.lastManStandingMin ?? 3));
+                return (
+                  <div
+                    data-testid="infection-lms-section"
+                    className="py-3.5 space-y-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-bold text-white flex items-center gap-2">
+                          <span>Last Man Standing</span>
+                          <span className="px-1.5 py-0.5 rounded-md bg-red-500/15 border border-red-400/35 text-[10px] font-extrabold uppercase tracking-wider text-red-300">
+                            Infection
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          With 1 Survivor left, clock drops here &amp; reveals all players live
+                        </div>
+                      </div>
+                      <span
+                        data-testid="infection-lms-value"
+                        className="font-mono text-sm font-extrabold text-red-300 tabular-nums shrink-0 pt-0.5"
+                      >
+                        {currentLmsMin} min
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <input
+                        type="range"
+                        data-testid="infection-lms-slider"
+                        aria-label="Last Man Standing countdown minutes"
+                        min={1}
+                        max={maxLmsMin}
+                        step={1}
+                        disabled={!isHost}
+                        value={currentLmsMin}
+                        onChange={(e) =>
+                          patchSettings({
+                            lastManStandingMin: Math.max(
+                              1,
+                              Math.min(maxLmsMin, Number(e.target.value))
+                            ),
+                          })
+                        }
+                        className="fk-slider w-full disabled:opacity-50"
+                      />
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 tabular-nums">
+                        <span>1 min</span>
+                        <span>{Math.ceil((1 + maxLmsMin) / 2)} min</span>
+                        <span>{maxLmsMin} min</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Hunters Can Talk Toggle */}
               <div className="py-3 flex items-center justify-between gap-3">

@@ -180,7 +180,17 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const styleReadyRef = useRef<boolean>(false);
   const currentStyleThemeRef = useRef<MapTheme | null>(null);
-  const dynamicMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const pingMarkersRef = useRef<
+    Map<string, { marker: maplibregl.Marker; el: HTMLDivElement; sig: string; pingedAt: number }>
+  >(new Map());
+  const playerMarkersRef = useRef<
+    Map<string, { marker: maplibregl.Marker; el: HTMLDivElement; sig: string }>
+  >(new Map());
+  const fallbackMarkerRef = useRef<{
+    marker: maplibregl.Marker;
+    el: HTMLDivElement;
+    sig: string;
+  } | null>(null);
   const editorMarkersRef = useRef<maplibregl.Marker[]>([]);
   const isDraggingEditorRef = useRef(false);
 
@@ -350,8 +360,14 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
 
     return () => {
       resizeObserver.disconnect();
-      dynamicMarkersRef.current.forEach((m) => m.remove());
-      dynamicMarkersRef.current = [];
+      pingMarkersRef.current.forEach((entry) => entry.marker.remove());
+      pingMarkersRef.current.clear();
+      playerMarkersRef.current.forEach((entry) => entry.marker.remove());
+      playerMarkersRef.current.clear();
+      if (fallbackMarkerRef.current) {
+        fallbackMarkerRef.current.marker.remove();
+        fallbackMarkerRef.current = null;
+      }
       editorMarkersRef.current.forEach((m) => m.remove());
       editorMarkersRef.current = [];
       map.remove();
@@ -546,87 +562,204 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
     }
   }, [editableZone, activeZone, onZoneChange]);
 
-  // Render Player Markers & Radar Pings
+  // Persistent, flicker-free Player Markers & Radar Pings (smooth setLngLat updates)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    dynamicMarkersRef.current.forEach((m) => m.remove());
-    dynamicMarkersRef.current = [];
+    const formatAge = (pingedAt: number) => {
+      const ageSec = Math.max(0, Math.round((nowMs - pingedAt) / 1000));
+      return ageSec < 60 ? `${ageSec}s ago` : `${Math.floor(ageSec / 60)}m ago`;
+    };
 
-    // 1. Radar Pings
+    // 1. Radar Pings (keyed by playerId; ripple resets only when pingedAt advances)
+    const activePingIds = new Set<string>();
     for (const ping of pings) {
-      const ageSec = Math.max(0, Math.round((nowMs - ping.pingedAt) / 1000));
-      const ageText = ageSec < 60 ? `${ageSec}s ago` : `${Math.floor(ageSec / 60)}m ago`;
-      const el = document.createElement('div');
-      el.style.cssText = 'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
-      el.innerHTML = `
-        <div class="fk-ping-ripple"></div>
-        <div style="width:14px;height:14px;border-radius:9999px;background:#22D3EE;border:2.5px solid #08090E;box-shadow:0 0 14px rgba(34,211,238,0.85);"></div>
-        <div style="margin-top:3px;padding:1px 7px;border-radius:9999px;background:rgba(8,9,14,0.88);border:1px solid rgba(34,211,238,0.45);color:#A5F3FC;font-size:10px;font-weight:700;white-space:nowrap;">${escapeHtml(
-          ping.playerName.replace(' (AI)', '')
-        )} · ${ageText}</div>
-      `;
-      const marker = new maplibregl.Marker({ element: el, anchor: 'top' })
-        .setLngLat([ping.lng, ping.lat])
-        .addTo(map);
-      dynamicMarkersRef.current.push(marker);
+      const key = ping.playerId;
+      activePingIds.add(key);
+      const shortName = ping.playerName.replace(' (AI)', '');
+      const sig = `${shortName}|${ping.pingedAt}`;
+      const existing = pingMarkersRef.current.get(key);
+
+      if (existing && existing.sig === sig) {
+        existing.marker.setLngLat([ping.lng, ping.lat]);
+      } else {
+        if (existing) {
+          existing.marker.remove();
+        }
+        const el = document.createElement('div');
+        el.setAttribute('data-ping-marker', ping.playerId);
+        el.style.cssText =
+          'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
+        el.innerHTML = `
+          <div class="fk-ping-ripple"></div>
+          <div style="width:14px;height:14px;border-radius:9999px;background:#22D3EE;border:2.5px solid #08090E;box-shadow:0 0 14px rgba(34,211,238,0.85);"></div>
+          <div style="margin-top:3px;padding:1px 7px;border-radius:9999px;background:rgba(8,9,14,0.88);border:1px solid rgba(34,211,238,0.45);color:#A5F3FC;font-size:10px;font-weight:700;white-space:nowrap;">${escapeHtml(
+            shortName
+          )} · <span data-ping-age="true">${formatAge(ping.pingedAt)}</span></div>
+        `;
+        const marker = new maplibregl.Marker({ element: el, anchor: 'top' })
+          .setLngLat([ping.lng, ping.lat])
+          .addTo(map);
+        pingMarkersRef.current.set(key, { marker, el, sig, pingedAt: ping.pingedAt });
+      }
+    }
+    for (const [key, entry] of pingMarkersRef.current.entries()) {
+      if (!activePingIds.has(key)) {
+        entry.marker.remove();
+        pingMarkersRef.current.delete(key);
+      }
     }
 
-    // 2. Visible Players
+    // 2. Visible Players (persistent DOM elements, updated smoothly via setLngLat)
+    const activePlayerIds = new Set<string>();
     for (const item of visibleMarkers) {
-      const { player, position, isEmergencyPin, isExposedOob } = item;
+      const { player, position, isEmergencyPin, isExposedOob, isLastManStandingReveal } = item;
+      activePlayerIds.add(player.id);
       const isSelf = player.id === viewerId;
       const initial = getCallsignInitial(player.name);
+      const isLmsSurvivor = Boolean(isLastManStandingReveal && player.role === 'runner');
+      const isLmsHunter = Boolean(isLastManStandingReveal && player.role === 'hunter');
+
       const badgeColor = isEmergencyPin
         ? '#EF4444'
         : isExposedOob
         ? '#F59E0B'
+        : isLmsHunter
+        ? '#EF4444'
+        : isLmsSurvivor
+        ? '#10B981'
         : player.color || (player.role === 'hunter' ? '#EF4444' : '#10B981');
       const shortName = player.name.replace(' (AI)', '');
-      const ringColor = isEmergencyPin ? 'rgba(239,68,68,0.65)' : `${badgeColor}88`;
+      const ringColor = isEmergencyPin
+        ? 'rgba(239,68,68,0.75)'
+        : isLmsSurvivor
+        ? 'rgba(251,191,36,0.85)'
+        : isLmsHunter
+        ? 'rgba(239,68,68,0.78)'
+        : `${badgeColor}88`;
+      const borderColor = isSelf
+        ? '#FFFFFF'
+        : isLmsSurvivor
+        ? '#FBBF24'
+        : isLmsHunter
+        ? '#FCA5A5'
+        : '#08090E';
+      const labelBorderColor = isLmsSurvivor
+        ? 'rgba(251,191,36,0.55)'
+        : isLmsHunter
+        ? 'rgba(239,68,68,0.55)'
+        : 'rgba(255,255,255,0.14)';
+      const suffix = isEmergencyPin
+        ? ' · SOS'
+        : isExposedOob
+        ? ' · OOB'
+        : isLastManStandingReveal && !isSelf
+        ? player.role === 'runner'
+          ? ' · SURVIVOR'
+          : ' · HUNTER'
+        : '';
 
-      const el = document.createElement('div');
-      el.style.cssText = 'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
-      el.innerHTML = `
-        <div class="fk-player-pulse" style="border:2px solid ${ringColor};background:${badgeColor}26;"></div>
-        <div style="width:${isSelf ? 32 : 28}px;height:${
-        isSelf ? 32 : 28
-      }px;border-radius:9999px;background:${badgeColor};border:2.5px solid ${
-        isSelf ? '#FFFFFF' : '#08090E'
-      };color:#08090E;font-size:${
-        isSelf ? 13 : 11
-      }px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.6);">${escapeHtml(
-        initial
-      )}</div>
-        <div style="margin-top:3px;padding:1px 7px;border-radius:9999px;background:rgba(8,9,14,0.88);border:1px solid rgba(255,255,255,0.14);color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;">${escapeHtml(
-          isSelf ? 'You' : shortName
-        )}${isEmergencyPin ? ' · SOS' : isExposedOob ? ' · OOB' : ''}</div>
-      `;
+      const sig = `${isSelf}|${shortName}|${initial}|${badgeColor}|${ringColor}|${borderColor}|${suffix}|${player.role}|${Boolean(
+        isLastManStandingReveal
+      )}`;
+      const existing = playerMarkersRef.current.get(player.id);
 
-      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([position.lng, position.lat])
-        .addTo(map);
-      dynamicMarkersRef.current.push(marker);
-    }
-
-    // Fallback user center pin if no visibleMarkers provided and not editing
-    if (visibleMarkers.length === 0 && !editableZone && !showTrailsForPlayers) {
-      const initial = getCallsignInitial(centerLabel || 'You');
-      const el = document.createElement('div');
-      el.style.cssText = 'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
-      el.innerHTML = `
-        <div class="fk-player-pulse" style="border:2px solid rgba(16,185,129,0.65);background:rgba(16,185,129,0.2);"></div>
-        <div style="width:28px;height:28px;border-radius:9999px;background:#10B981;border:2.5px solid #FFFFFF;color:#08090E;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.6);">${escapeHtml(
+      const renderPlayerMarkup = (el: HTMLDivElement) => {
+        el.setAttribute('data-player-marker', player.id);
+        el.setAttribute('data-player-role', player.role);
+        if (isLastManStandingReveal) {
+          el.setAttribute('data-lms-reveal', 'true');
+        } else {
+          el.removeAttribute('data-lms-reveal');
+        }
+        el.innerHTML = `
+          <div class="fk-player-pulse" style="border:2px solid ${ringColor};background:${badgeColor}26;"></div>
+          <div style="width:${isSelf ? 32 : 28}px;height:${
+          isSelf ? 32 : 28
+        }px;border-radius:9999px;background:${badgeColor};border:2.5px solid ${borderColor};color:#08090E;font-size:${
+          isSelf ? 13 : 11
+        }px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.6);">${escapeHtml(
           initial
         )}</div>
-      `;
-      const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([center.lng, center.lat])
-        .addTo(map);
-      dynamicMarkersRef.current.push(marker);
+          <div style="margin-top:3px;padding:1px 7px;border-radius:9999px;background:rgba(8,9,14,0.88);border:1px solid ${labelBorderColor};color:#F8FAFC;font-size:10px;font-weight:700;white-space:nowrap;">${escapeHtml(
+          isSelf ? 'You' : shortName
+        )}${suffix}</div>
+        `;
+      };
+
+      if (existing) {
+        existing.marker.setLngLat([position.lng, position.lat]);
+        if (existing.sig !== sig) {
+          renderPlayerMarkup(existing.el);
+          existing.sig = sig;
+        }
+      } else {
+        const el = document.createElement('div');
+        el.style.cssText =
+          'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
+        renderPlayerMarkup(el);
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([position.lng, position.lat])
+          .addTo(map);
+        playerMarkersRef.current.set(player.id, { marker, el, sig });
+      }
     }
-  }, [visibleMarkers, pings, viewerId, nowMs, editableZone, centerLabel, center.lat, center.lng, showTrailsForPlayers]);
+    for (const [key, entry] of playerMarkersRef.current.entries()) {
+      if (!activePlayerIds.has(key)) {
+        entry.marker.remove();
+        playerMarkersRef.current.delete(key);
+      }
+    }
+
+    // 3. Fallback user center pin if no visibleMarkers provided and not editing
+    const showFallback = visibleMarkers.length === 0 && !editableZone && !showTrailsForPlayers;
+    if (showFallback) {
+      const initial = getCallsignInitial(centerLabel || 'You');
+      const sig = initial;
+      if (fallbackMarkerRef.current) {
+        fallbackMarkerRef.current.marker.setLngLat([center.lng, center.lat]);
+        if (fallbackMarkerRef.current.sig !== sig) {
+          fallbackMarkerRef.current.el.innerHTML = `
+            <div class="fk-player-pulse" style="border:2px solid rgba(16,185,129,0.65);background:rgba(16,185,129,0.2);"></div>
+            <div style="width:28px;height:28px;border-radius:9999px;background:#10B981;border:2.5px solid #FFFFFF;color:#08090E;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.6);">${escapeHtml(
+              initial
+            )}</div>
+          `;
+          fallbackMarkerRef.current.sig = sig;
+        }
+      } else {
+        const el = document.createElement('div');
+        el.style.cssText =
+          'position:relative;display:flex;flex-direction:column;align-items:center;pointer-events:none;';
+        el.innerHTML = `
+          <div class="fk-player-pulse" style="border:2px solid rgba(16,185,129,0.65);background:rgba(16,185,129,0.2);"></div>
+          <div style="width:28px;height:28px;border-radius:9999px;background:#10B981;border:2.5px solid #FFFFFF;color:#08090E;font-size:12px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.6);">${escapeHtml(
+            initial
+          )}</div>
+        `;
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([center.lng, center.lat])
+          .addTo(map);
+        fallbackMarkerRef.current = { marker, el, sig };
+      }
+    } else if (fallbackMarkerRef.current) {
+      fallbackMarkerRef.current.marker.remove();
+      fallbackMarkerRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleMarkers, pings, viewerId, editableZone, centerLabel, center.lat, center.lng, showTrailsForPlayers]);
+
+  // Lightweight in-place ping age text updater (zero marker teardown)
+  useEffect(() => {
+    for (const entry of pingMarkersRef.current.values()) {
+      const ageEl = entry.el.querySelector('[data-ping-age="true"]');
+      if (ageEl) {
+        const ageSec = Math.max(0, Math.round((nowMs - entry.pingedAt) / 1000));
+        ageEl.textContent = ageSec < 60 ? `${ageSec}s ago` : `${Math.floor(ageSec / 60)}m ago`;
+      }
+    }
+  }, [nowMs, pings]);
 
   return (
     <div

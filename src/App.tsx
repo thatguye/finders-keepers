@@ -12,7 +12,6 @@ import type {
   LatLng,
   MapTheme,
   PlayerState,
-  RadarPing,
   RoomSettings,
   RoomState,
   TeamPreference,
@@ -24,17 +23,21 @@ import {
   roundCoord,
 } from './game/geo';
 import {
+  applyInfectionLastManStanding,
   assignTeams,
   calculateScores,
   canAccessGameWithLocation,
   checkWinCondition,
   createDefaultSettings,
+  createPingSnapshots,
   cycleTeamPreference,
   evaluateOobState,
   filterVisibleChatMessages,
   formatRoomCodeInput,
   generateRoomCode,
+  isInfectionLastManStanding,
   type LocationAccessStatus,
+  mergeRemoteRoomState,
   PLAYER_COLORS,
   processTag,
   shouldShowRoleReveal,
@@ -137,6 +140,8 @@ export default function App() {
   const soloSpeedRef = useRef<1 | 5 | 20>(soloSpeed);
   soloSpeedRef.current = soloSpeed;
   const lastUploadedGpsRef = useRef<GpsPoint | null>(null);
+  const gpsPollInFlightRef = useRef<boolean>(false);
+  const lastRemoteSyncCheckRef = useRef<number>(0);
   const recordedRoundCodeRef = useRef<string | null>(null);
 
   const flashVisualEdge = useCallback((color: FlashColor) => {
@@ -220,18 +225,60 @@ export default function App() {
         onQueueCountChange: (count) => setOfflineQueueCount(count),
         onRoomUpdate: (remoteRoom) => {
           setRoom((prev) => {
-            if (prev && prev.updatedAt > remoteRoom.updatedAt) return prev;
+            const merged = mergeRemoteRoomState(prev, remoteRoom);
             if (
               prev?.phase === 'lobby' &&
-              (remoteRoom.phase === 'head_start' || remoteRoom.phase === 'hunt')
+              (merged.phase === 'head_start' || merged.phase === 'hunt')
             ) {
-              const me = remoteRoom.players.find((p) => p.id === profileRef.current.playerId);
+              const me = merged.players.find((p) => p.id === profileRef.current.playerId);
               if (shouldShowRoleReveal(me)) {
-                setPendingRoleRevealKey(`${remoteRoom.code}_${remoteRoom.roundStartedAt ?? Date.now()}`);
+                setPendingRoleRevealKey(`${merged.code}_${merged.roundStartedAt ?? Date.now()}`);
+              }
+              // Force-broadcast fresh GPS immediately on round start
+              const livePos = userPosRef.current;
+              if (livePos && !merged.isSoloDemo) {
+                const pt: GpsPoint = {
+                  lat: roundCoord(livePos.lat),
+                  lng: roundCoord(livePos.lng),
+                  ts: Date.now(),
+                };
+                lastUploadedGpsRef.current = pt;
+                void supabaseSync.sendGpsDelta(merged.code, profileRef.current.playerId, pt);
               }
             }
-            saveLocalRoomSnapshot(remoteRoom);
-            return remoteRoom;
+            if (merged.lastManStandingActive && !prev?.lastManStandingActive) {
+              fireAlert('last_man_standing');
+            } else if (
+              merged.phase === 'hunt' &&
+              typeof merged.lastPingAt === 'number' &&
+              (prev?.lastPingAt === null || prev?.lastPingAt === undefined || merged.lastPingAt > prev.lastPingAt)
+            ) {
+              const me = merged.players.find((p) => p.id === profileRef.current.playerId);
+              if (me && (me.role === 'hunter' || me.role === 'spectator')) {
+                fireAlert('radar_ping');
+              }
+            }
+            saveLocalRoomSnapshot(merged);
+            return merged;
+          });
+        },
+        onPingBatch: (batch) => {
+          setRoom((prev) => {
+            if (!prev || prev.code !== code) return prev;
+            if (prev.lastPingAt && batch.lastPingAt <= prev.lastPingAt) return prev;
+            const me = prev.players.find((p) => p.id === profileRef.current.playerId);
+            if (me && (me.role === 'hunter' || me.role === 'spectator')) {
+              fireAlert('radar_ping');
+            }
+            const next: RoomState = {
+              ...prev,
+              pings: batch.pings,
+              lastPingAt: batch.lastPingAt,
+              nextPingAt: batch.nextPingAt,
+              updatedAt: Math.max(prev.updatedAt, batch.lastPingAt),
+            };
+            saveLocalRoomSnapshot(next);
+            return next;
           });
         },
         onGpsDelta: (delta) => {
@@ -239,6 +286,8 @@ export default function App() {
             if (!prev || prev.code !== code) return prev;
             const players = prev.players.map((p) => {
               if (p.id !== delta.playerId) return p;
+              // Never overwrite a newer GPS fix with an older out-of-order packet
+              if (p.lastPos && delta.ts < p.lastPos.ts) return p;
               const nextPt: GpsPoint = { lat: delta.lat, lng: delta.lng, ts: delta.ts };
               const outside = !isPointInZone(nextPt, prev.currentZone);
               const oobStartedAt =
@@ -248,11 +297,11 @@ export default function App() {
               const oobEval = evaluateOobState(outside && prev.phase === 'hunt', oobStartedAt, delta.ts);
               const lastTrail = p.trail[p.trail.length - 1];
               const append =
-                !lastTrail || haversineMeters(lastTrail, nextPt) >= 4 || delta.ts - lastTrail.ts >= 10_000;
+                !lastTrail || haversineMeters(lastTrail, nextPt) >= 3 || delta.ts - lastTrail.ts >= 6_000;
               return {
                 ...p,
                 lastPos: nextPt,
-                trail: append ? [...p.trail.slice(-400), nextPt] : p.trail,
+                trail: append ? [...p.trail.slice(-500), nextPt] : p.trail,
                 oobStartedAt,
                 oobStatus: oobEval.status,
                 lastSeenAt: delta.ts,
@@ -265,8 +314,15 @@ export default function App() {
         onTagSignal: (sig) => {
           setRoom((prev) => {
             if (!prev) return prev;
+            // Deduplicate if tag already applied via room_state broadcast
+            const alreadyApplied = prev.tags.some(
+              (t) => t.taggedId === sig.taggedId && Math.abs(t.ts - sig.ts) < 5000
+            );
+            if (alreadyApplied) return prev;
+            const wasLms = !!prev.lastManStandingActive;
             const updated = processTag(prev, sig.taggedId, sig.taggerId, sig.reason, sig.ts);
-            fireAlert('tagged');
+            if (updated === prev) return prev;
+            fireAlert(updated.lastManStandingActive && !wasLms ? 'last_man_standing' : 'tagged');
             saveLocalRoomSnapshot(updated);
             return updated;
           });
@@ -286,7 +342,7 @@ export default function App() {
                 updatedAt: Date.now(),
               };
             }
-            // Clear emergency
+            // Clear emergency and shift all scheduled timers cleanly by pausedDuration
             const pausedDuration = prev.pausedAt ? Date.now() - prev.pausedAt : 0;
             return {
               ...prev,
@@ -294,6 +350,10 @@ export default function App() {
               pausedAt: null,
               roundEndsAt: prev.roundEndsAt ? prev.roundEndsAt + pausedDuration : null,
               headStartEndsAt: prev.headStartEndsAt ? prev.headStartEndsAt + pausedDuration : null,
+              nextPingAt: prev.nextPingAt ? prev.nextPingAt + pausedDuration : null,
+              nextZoneTransitionAt: prev.nextZoneTransitionAt
+                ? prev.nextZoneTransitionAt + pausedDuration
+                : null,
               emergency: null,
               updatedAt: Date.now(),
             };
@@ -368,7 +428,7 @@ export default function App() {
     }
     setLocationError(null);
 
-    const applyGpsFix = (pos: GeolocationPosition) => {
+    const applyGpsFix = (pos: GeolocationPosition, forceBroadcast = false) => {
       const ts = Date.now();
       const pt: GpsPoint = {
         lat: roundCoord(pos.coords.latitude),
@@ -397,22 +457,30 @@ export default function App() {
           const oobEval = evaluateOobState(outside, oobStartedAt, ts);
           const lastTrail = p.trail[p.trail.length - 1];
           const append =
-            !lastTrail || haversineMeters(lastTrail, pt) >= 5 || ts - lastTrail.ts >= 10_000;
+            !lastTrail || haversineMeters(lastTrail, pt) >= 3 || ts - lastTrail.ts >= 6_000;
           return {
             ...p,
             lastPos: pt,
-            trail: append ? [...p.trail.slice(-500), pt] : p.trail,
+            trail: append ? [...p.trail.slice(-600), pt] : p.trail,
             oobStartedAt,
             oobStatus: oobEval.status,
             lastSeenAt: ts,
+            connected: true,
           };
         });
 
         return { ...prev, players };
       });
 
-      // Smart cellular throttle for outgoing GPS broadcast
-      if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt)) {
+      // High-frequency live GPS broadcast (force immediately right before pings or during LMS)
+      const pingImminent =
+        cur.phase === 'hunt' &&
+        typeof cur.nextPingAt === 'number' &&
+        cur.nextPingAt - ts <= 3500 &&
+        cur.nextPingAt - ts >= -1500;
+      const urgentUpload = forceBroadcast || pingImminent || isInfectionLastManStanding(cur);
+
+      if (!cur.isSoloDemo && shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt, urgentUpload)) {
         lastUploadedGpsRef.current = pt;
         void supabaseSync.sendGpsDelta(cur.code, profileRef.current.playerId, pt);
       }
@@ -439,21 +507,29 @@ export default function App() {
       }
     };
 
-    // Prompt for location access immediately
-    navigator.geolocation.getCurrentPosition(applyGpsFix, handleGpsError, {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000,
-    });
+    // Prompt for location access immediately with maximum accuracy & zero cached staleness
+    navigator.geolocation.getCurrentPosition(
+      (pos) => applyGpsFix(pos, true),
+      handleGpsError,
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000,
+      }
+    );
 
     if (geoWatchIdRef.current !== null) {
       navigator.geolocation.clearWatch(geoWatchIdRef.current);
     }
-    geoWatchIdRef.current = navigator.geolocation.watchPosition(applyGpsFix, handleGpsError, {
-      enableHighAccuracy: true,
-      maximumAge: 3000,
-      timeout: 15000,
-    });
+    geoWatchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => applyGpsFix(pos, false),
+      handleGpsError,
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000,
+      }
+    );
   }, []);
 
   // Ask for location directly on launch and react to live browser permission changes
@@ -561,20 +637,21 @@ export default function App() {
     }
   }, [hasLocationAccess, userPos, connectRoomChannel]);
 
-  // Force full room state sync, re-check GPS if blocked, & reacquire Wake Lock on visibilitychange
+  // Force full room state sync, fresh GPS broadcast, & reacquire Wake Lock on visibilitychange
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        if (!userPosRef.current) {
-          requestLocationAccess();
-        }
+        requestLocationAccess();
         const cur = roomRef.current;
         if (cur && !cur.isSoloDemo) {
           void supabaseSync.flushQueue();
           void supabaseSync.fetchRoom(cur.code).then((remote) => {
-            if (remote && remote.updatedAt >= cur.updatedAt) {
-              setRoom(remote);
-              saveLocalRoomSnapshot(remote);
+            if (remote) {
+              setRoom((prev) => {
+                const merged = mergeRemoteRoomState(prev, remote);
+                saveLocalRoomSnapshot(merged);
+                return merged;
+              });
             }
           });
         }
@@ -586,6 +663,94 @@ export default function App() {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [requestLocationAccess]);
+
+  // Active high-frequency GPS refresh poller (every 2s during active rooms so mobile OS never stalls watchPosition)
+  const isInActiveRoom = !!room && room.phase !== 'ended';
+  useEffect(() => {
+    if (!hasLocationAccess || !isInActiveRoom) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    const pollId = window.setInterval(() => {
+      if (gpsPollInFlightRef.current) return;
+      const cur = roomRef.current;
+      if (!cur || cur.phase === 'ended') return;
+
+      gpsPollInFlightRef.current = true;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          gpsPollInFlightRef.current = false;
+          const ts = Date.now();
+          const pt: GpsPoint = {
+            lat: roundCoord(pos.coords.latitude),
+            lng: roundCoord(pos.coords.longitude),
+            ts,
+          };
+          setUserPos({ lat: pt.lat, lng: pt.lng });
+          if (typeof pos.coords.accuracy === 'number' && Number.isFinite(pos.coords.accuracy)) {
+            setGpsAccuracyMeters(pos.coords.accuracy);
+          }
+
+          const latestRoom = roomRef.current;
+          if (!latestRoom) return;
+
+          setRoom((prev) => {
+            if (!prev) return prev;
+            const myId = profileRef.current.playerId;
+            const players = prev.players.map((p) => {
+              if (p.id !== myId) return p;
+              const outside =
+                prev.phase === 'hunt' &&
+                p.role === 'runner' &&
+                !isPointInZone(pt, prev.currentZone);
+              const oobStartedAt = outside ? p.oobStartedAt ?? ts : null;
+              const oobEval = evaluateOobState(outside, oobStartedAt, ts);
+              const lastTrail = p.trail[p.trail.length - 1];
+              const append =
+                !lastTrail || haversineMeters(lastTrail, pt) >= 3 || ts - lastTrail.ts >= 6_000;
+              return {
+                ...p,
+                lastPos: pt,
+                trail: append ? [...p.trail.slice(-600), pt] : p.trail,
+                oobStartedAt,
+                oobStatus: oobEval.status,
+                lastSeenAt: ts,
+                connected: true,
+              };
+            });
+            return { ...prev, players };
+          });
+
+          const pingImminent =
+            latestRoom.phase === 'hunt' &&
+            typeof latestRoom.nextPingAt === 'number' &&
+            latestRoom.nextPingAt - ts <= 3500 &&
+            latestRoom.nextPingAt - ts >= -1500;
+          const forcePush = pingImminent || isInfectionLastManStanding(latestRoom);
+
+          if (
+            !latestRoom.isSoloDemo &&
+            shouldThrottleGpsUpload(lastUploadedGpsRef.current, pt, forcePush)
+          ) {
+            lastUploadedGpsRef.current = pt;
+            void supabaseSync.sendGpsDelta(latestRoom.code, profileRef.current.playerId, pt);
+          }
+        },
+        () => {
+          gpsPollInFlightRef.current = false;
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 7000,
+        }
+      );
+    }, 2000);
+
+    return () => {
+      window.clearInterval(pollId);
+      gpsPollInFlightRef.current = false;
+    };
+  }, [hasLocationAccess, isInActiveRoom]);
 
   // Manage Screen Wake Lock during active rounds
   const isRoundActive = !!room && (room.phase === 'head_start' || room.phase === 'hunt');
@@ -600,7 +765,7 @@ export default function App() {
     };
   }, [isRoundActive]);
 
-  // Local 1-second Rule Execution Engine (Timers, Pings, Zone Shrink/Curfew, OOB 2m Auto-Elimination, Solo Bots)
+  // Local 1-second Rule Execution Engine (Timers, Synced Pings, Zone Shrink/Curfew, OOB 30s Auto-Elimination, LMS, Solo Bots)
   useEffect(() => {
     const id = window.setInterval(() => {
       const now = Date.now();
@@ -612,12 +777,17 @@ export default function App() {
 
       let next = cur;
       let changed = false;
+      let meetingResolved = false;
+      let pingFired = false;
+      let zoneShrunk = false;
+      let lmsJustTriggered = false;
       const isHost = cur.hostId === profileRef.current.playerId;
 
       // 1. Auto-resolve Imposter meeting when discussion timer hits 0
       if (next.phase === 'meeting' && next.meeting?.active && now >= next.meeting.endsAt) {
         if (isHost || next.isSoloDemo) {
           next = resolveImposterMeetingState(next, now);
+          meetingResolved = true;
           changed = true;
         }
       }
@@ -645,13 +815,26 @@ export default function App() {
           phase: 'hunt',
           updatedAt: now,
         };
-        fireAlert('head_start_end');
+        // Also check immediate LMS (e.g., 2-player Infection round starting with 1 Runner)
+        const lmsRes = applyInfectionLastManStanding(next, now);
+        if (lmsRes.justTriggered) {
+          next = lmsRes.room;
+          lmsJustTriggered = true;
+          fireAlert('last_man_standing');
+        } else {
+          fireAlert('head_start_end');
+        }
         changed = true;
       }
 
       // 3. Step Solo AI Bots
       if (next.isSoloDemo && (next.phase === 'head_start' || next.phase === 'hunt')) {
+        const wasLms = !!next.lastManStandingActive;
         next = stepSoloBots(next, speedMult, now);
+        if (next.lastManStandingActive && !wasLms) {
+          lmsJustTriggered = true;
+          fireAlert('last_man_standing');
+        }
         changed = true;
       }
 
@@ -674,11 +857,17 @@ export default function App() {
             const oob = evaluateOobState(true, p.oobStartedAt, now);
             if (oob.status === 'eliminated') {
               if (isHost || next.isSoloDemo || p.id === profileRef.current.playerId) {
+                const wasLms = !!next.lastManStandingActive;
                 next = processTag(next, p.id, undefined, 'oob_timeout', now);
                 if (!next.isSoloDemo) {
                   void supabaseSync.sendTagSignal(next.code, p.id, undefined, 'oob_timeout', now);
                 }
-                fireAlert('tagged');
+                if (next.lastManStandingActive && !wasLms) {
+                  lmsJustTriggered = true;
+                  fireAlert('last_man_standing');
+                } else {
+                  fireAlert('tagged');
+                }
                 oobEliminated = true;
                 changed = true;
               }
@@ -696,24 +885,89 @@ export default function App() {
         }
       }
 
-      // 5. Scheduled Radar Pings (Host or Solo executes authoritative ping snapshot)
+      // 4b. Safety-net check for Infection Last Man Standing (guarantees LMS activates even across remote joins/syncs)
+      if (next.phase === 'hunt' && (isHost || next.isSoloDemo)) {
+        const lmsCheck = applyInfectionLastManStanding(next, now);
+        if (lmsCheck.justTriggered) {
+          next = lmsCheck.room;
+          lmsJustTriggered = true;
+          fireAlert('last_man_standing');
+          changed = true;
+        }
+      }
+
+      // 5. Scheduled Radar Pings (Authoritative host ping + dedicated ping_batch broadcast to ALL Hunters & Infected)
       if (
         next.phase === 'hunt' &&
-        (isHost || next.isSoloDemo) &&
+        !isInfectionLastManStanding(next) &&
         next.settings.pingIntervalMin > 0 &&
-        next.nextPingAt &&
-        now >= next.nextPingAt
+        next.nextPingAt
       ) {
-        const snapshots = createPingSnapshots(next, now);
-        next = {
-          ...next,
-          pings: snapshots,
-          lastPingAt: now,
-          nextPingAt: now + next.settings.pingIntervalMin * 60_000,
-          updatedAt: now,
-        };
-        fireAlert('radar_ping');
-        changed = true;
+        if ((isHost || next.isSoloDemo) && now >= next.nextPingAt) {
+          const snapshots = createPingSnapshots(next, now);
+          const upcomingPingAt = now + next.settings.pingIntervalMin * 60_000;
+          next = {
+            ...next,
+            pings: snapshots,
+            lastPingAt: now,
+            nextPingAt: upcomingPingAt,
+            updatedAt: now,
+          };
+          if (!next.isSoloDemo) {
+            void supabaseSync.sendPingBatch(next.code, snapshots, now, upcomingPingAt);
+          }
+          const viewer = next.players.find((p) => p.id === profileRef.current.playerId);
+          if (viewer && (viewer.role === 'hunter' || viewer.role === 'spectator')) {
+            fireAlert('radar_ping');
+          }
+          pingFired = true;
+          changed = true;
+        } else if (!isHost && !next.isSoloDemo && now > next.nextPingAt + 5500) {
+          // Non-host safety net: if scheduled ping is overdue (brief drop or host offline), recover immediately
+          if (now - lastRemoteSyncCheckRef.current >= 5000) {
+            lastRemoteSyncCheckRef.current = now;
+            void supabaseSync.fetchRoom(next.code).then((remote) => {
+              if (remote) {
+                setRoom((prev) => {
+                  const merged = mergeRemoteRoomState(prev, remote);
+                  saveLocalRoomSnapshot(merged);
+                  return merged;
+                });
+              }
+            });
+          }
+          // If host has been unreachable >11s past scheduled ping, fire a local ping fallback from latest live runner GPS
+          if (now > next.nextPingAt + 11_000) {
+            const snapshots = createPingSnapshots(next, now);
+            const upcomingPingAt = now + next.settings.pingIntervalMin * 60_000;
+            next = {
+              ...next,
+              pings: snapshots,
+              lastPingAt: now,
+              nextPingAt: upcomingPingAt,
+              updatedAt: now,
+            };
+            const viewer = next.players.find((p) => p.id === profileRef.current.playerId);
+            if (viewer && (viewer.role === 'hunter' || viewer.role === 'spectator')) {
+              fireAlert('radar_ping');
+            }
+            changed = true;
+          }
+        }
+      }
+
+      // 5b. Periodic 10-second multiplayer state reconciliation (recovers any missed broadcast without gaps)
+      if (!next.isSoloDemo && !isHost && now - lastRemoteSyncCheckRef.current >= 10_000) {
+        lastRemoteSyncCheckRef.current = now;
+        void supabaseSync.fetchRoom(next.code).then((remote) => {
+          if (remote) {
+            setRoom((prev) => {
+              const merged = mergeRemoteRoomState(prev, remote);
+              saveLocalRoomSnapshot(merged);
+              return merged;
+            });
+          }
+        });
       }
 
       // 6. Scheduled Zone Shrink / Curfew Teleport
@@ -748,6 +1002,7 @@ export default function App() {
           updatedAt: now,
         };
         fireAlert('zone_shrink');
+        zoneShrunk = true;
         changed = true;
       }
 
@@ -768,10 +1023,16 @@ export default function App() {
       }
 
       if (changed) {
-        commitRoom(
-          next,
-          !next.isSoloDemo && (oobEliminated || (isHost && next.phase !== cur.phase))
-        );
+        const shouldPersistRemote =
+          !next.isSoloDemo &&
+          (oobEliminated ||
+            (isHost &&
+              (pingFired ||
+                zoneShrunk ||
+                lmsJustTriggered ||
+                meetingResolved ||
+                next.phase !== cur.phase)));
+        commitRoom(next, shouldPersistRemote);
       }
     }, 1000);
 
@@ -1082,27 +1343,35 @@ export default function App() {
       meeting: null,
       winner: null,
       winReason: undefined,
+      lastManStandingActive: false,
+      lastManStandingTriggeredAt: null,
       updatedAt: now,
     };
+
+    // If starting straight into Hunt with 1 Runner in Infection mode (e.g., 2-player game), activate LMS cleanly
+    const lmsStart = applyInfectionLastManStanding(started, now);
+    const finalStarted = lmsStart.room;
 
     recordedRoundCodeRef.current = null;
     setNewlyUnlockedBadges([]);
     setPocketModeOpen(false);
     const myAssigned = assigned.find((p) => p.id === profile.playerId);
     if (shouldShowRoleReveal(myAssigned)) {
-      setPendingRoleRevealKey(`${started.code}_${now}`);
+      setPendingRoleRevealKey(`${finalStarted.code}_${now}`);
     } else {
       setPendingRoleRevealKey(null);
     }
-    fireAlert('head_start_end');
-    commitRoom(started, true);
+    fireAlert(lmsStart.justTriggered ? 'last_man_standing' : 'head_start_end');
+    commitRoom(finalStarted, true);
   };
 
   const handleRunnerGotTagged = () => {
     if (!room) return;
     const now = Date.now();
+    const wasLms = !!room.lastManStandingActive;
     const updated = processTag(room, profile.playerId, undefined, 'physical', now);
-    fireAlert('tagged');
+    if (updated === room) return;
+    fireAlert(updated.lastManStandingActive && !wasLms ? 'last_man_standing' : 'tagged');
     commitRoom(updated, true);
     if (!room.isSoloDemo) {
       void supabaseSync.sendTagSignal(room.code, profile.playerId, undefined, 'physical', now);
@@ -1112,8 +1381,10 @@ export default function App() {
   const handleTagBotInSolo = (botId: string) => {
     if (!room) return;
     const now = Date.now();
+    const wasLms = !!room.lastManStandingActive;
     const updated = processTag(room, botId, profile.playerId, 'physical', now);
-    fireAlert('tagged');
+    if (updated === room) return;
+    fireAlert(updated.lastManStandingActive && !wasLms ? 'last_man_standing' : 'tagged');
     commitRoom(updated, false);
   };
 
@@ -1190,6 +1461,10 @@ export default function App() {
       pausedAt: null,
       roundEndsAt: room.roundEndsAt ? room.roundEndsAt + pausedMs : null,
       headStartEndsAt: room.headStartEndsAt ? room.headStartEndsAt + pausedMs : null,
+      nextPingAt: room.nextPingAt ? room.nextPingAt + pausedMs : null,
+      nextZoneTransitionAt: room.nextZoneTransitionAt
+        ? room.nextZoneTransitionAt + pausedMs
+        : null,
       emergency: null,
       updatedAt: now,
     };
@@ -1302,6 +1577,8 @@ export default function App() {
       meeting: null,
       winner: null,
       winReason: undefined,
+      lastManStandingActive: false,
+      lastManStandingTriggeredAt: null,
       players: room.players.map((p) => ({
         ...p,
         eliminated: false,
@@ -1336,17 +1613,16 @@ export default function App() {
   const handleSoloSkipHeadStart = () => {
     if (!room || !room.isSoloDemo) return;
     const now = Date.now();
-    fireAlert('head_start_end');
-    commitRoom(
-      {
-        ...room,
-        phase: 'hunt',
-        headStartEndsAt: now,
-        nextPingAt: now + 15_000,
-        updatedAt: now,
-      },
-      false
-    );
+    const enteredHunt: RoomState = {
+      ...room,
+      phase: 'hunt',
+      headStartEndsAt: now,
+      nextPingAt: now + 15_000,
+      updatedAt: now,
+    };
+    const lmsCheck = applyInfectionLastManStanding(enteredHunt, now);
+    fireAlert(lmsCheck.justTriggered ? 'last_man_standing' : 'head_start_end');
+    commitRoom(lmsCheck.room, false);
   };
 
   const handleSoloTriggerPing = () => {
@@ -1399,9 +1675,6 @@ export default function App() {
       room.phase === 'head_start' && nextHeadStart !== null && now >= nextHeadStart
         ? 'hunt'
         : room.phase;
-    if (nextPhase !== room.phase) {
-      fireAlert('head_start_end');
-    }
     const shifted: RoomState = {
       ...room,
       phase: nextPhase,
@@ -1411,7 +1684,13 @@ export default function App() {
       nextZoneTransitionAt: room.nextZoneTransitionAt ? room.nextZoneTransitionAt - shiftMs : null,
       updatedAt: now,
     };
-    const stepped = stepSoloBots(shifted, 12, now);
+    const lmsCheck = applyInfectionLastManStanding(shifted, now);
+    if (lmsCheck.justTriggered) {
+      fireAlert('last_man_standing');
+    } else if (nextPhase !== room.phase) {
+      fireAlert('head_start_end');
+    }
+    const stepped = stepSoloBots(lmsCheck.room, 12, now);
     commitRoom(stepped, false);
   };
 
@@ -1656,19 +1935,6 @@ export default function App() {
       </AnimatePresence>
     </>
   );
-}
-
-function createPingSnapshots(room: RoomState, nowMs: number): RadarPing[] {
-  return room.players
-    .filter((p) => p.role === 'runner' && !p.eliminated && p.lastPos)
-    .map((p) => ({
-      id: `ping_${nowMs}_${p.id}`,
-      playerId: p.id,
-      playerName: p.name,
-      lat: p.lastPos!.lat,
-      lng: p.lastPos!.lng,
-      pingedAt: nowMs,
-    }));
 }
 
 function resolveImposterMeetingState(room: RoomState, nowMs: number): RoomState {

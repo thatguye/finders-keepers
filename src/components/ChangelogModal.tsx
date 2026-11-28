@@ -14,11 +14,22 @@ interface ReleaseDefinition {
   highlights: string[];
 }
 
-export const LATEST_APP_VERSION = '2.3';
+export const LATEST_APP_VERSION = '2.4';
 
-const STORAGE_KEY = 'fk_changelog_timestamps_v4';
+const STORAGE_KEY = 'fk_changelog_timestamps_v5';
 
 const RELEASES: ReleaseDefinition[] = [
+  {
+    version: '2.4',
+    releasedAt: '2026-11-27T22:35:00-08:00',
+    title: 'High-Frequency GPS, Synced Pings & Infection Last Man Standing',
+    highlights: [
+      'Upgraded live GPS tracking to maximum accuracy with active 2-second refresh polling and pre-ping sync so coordinates never stall.',
+      'Fixed multiplayer ping syncing with dedicated real-time ping broadcasts and automatic recovery so every Hunter and newly Infected player always receives radar pings on time.',
+      'Added a Last Man Standing timer slider in Infection mode settings—when 1 Survivor remains, the round clock automatically drops to that time and reveals every player live on the map.',
+      'Eliminated 1-second map marker flicker, fixed Emergency Pause ping/shrink timer drift, and hardened Infection tag deduplication.',
+    ],
+  },
   {
     version: '2.3',
     releasedAt: '2026-11-27T14:13:00-08:00',
